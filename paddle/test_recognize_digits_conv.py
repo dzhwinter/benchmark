@@ -50,7 +50,7 @@ avg_cost = layers.mean(x=cost)
 optimizer = AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
 opts = optimizer.minimize(avg_cost)
 
-accuracy, acc_out = evaluator.accuracy(input=predict, label=label)
+accuracy = evaluator.Accuracy(input=predict, label=label)
 
 train_reader = paddle.batch(paddle.dataset.mnist.train(), batch_size=BATCH_SIZE)
 
@@ -77,16 +77,12 @@ for pass_id in range(PASS_NUM):
         outs = exe.run(framework.default_main_program(),
                        feed={"pixel": tensor_img,
                              "label": tensor_y},
-                       fetch_list=[avg_cost, acc_out])
+                       fetch_list=[avg_cost] + accuracy.metrics)
         end = time.clock()
         loss = np.array(outs[0])
         acc = np.array(outs[1])
         print "pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" % (
             pass_id, batch_id, loss, 1 - acc, (end - start) / 1000)
-
-        if loss < 10.0 and acc > 0.9:
-            # if avg cost less than 10.0 and accuracy is larger than 0.9, we think our code is good.
-            exit(0)
 
     pass_acc = accuracy.eval(exe)
     print "pass=%d, accuracy=%f, elapse=%f" % (pass_id, pass_acc, (
