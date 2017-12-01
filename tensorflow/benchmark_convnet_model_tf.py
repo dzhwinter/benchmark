@@ -1,41 +1,60 @@
-# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-"""Contains definitions for the preactivation form of Residual Networks.
-Residual networks (ResNets) were originally proposed in:
-[1] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun
-    Deep Residual Learning for Image Recognition. arXiv:1512.03385
-The full preactivation 'v2' ResNet variant implemented in this module was
-introduced by:
-[2] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun
-    Identity Mappings in Deep Residual Networks. arXiv: 1603.05027
-The key difference of the full preactivation 'v2' variant compared to the
-'v1' variant in [1] is the use of batch normalization before every weight layer
-rather than after.
-
+"""
 https://github.com/tensorflow/models/blob/master/official/resnet/resnet_model.py
-
 """
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import argparse
+
+import numpy as np
+import paddle.v2 as paddle
+import paddle.v2.fluid.profiler as profiler
 import tensorflow as tf
 
-_BATCH_NORM_DECAY = 0.997
-_BATCH_NORM_EPSILON = 1e-5
+DTYPE = tf.float32
+
+
+def parse_args():
+    parser = argparse.ArgumentParser('Convolution model benchmark.')
+    parser.add_argument(
+        '--model',
+        type=str,
+        choices=['resnet'],
+        default='resnet',
+        help='The model architecture.')
+    parser.add_argument(
+        '--batch_size', type=int, default=32, help='The minibatch size.')
+    parser.add_argument(
+        '--iterations', type=int, default=35, help='The number of minibatches.')
+    parser.add_argument(
+        '--pass_num', type=int, default=100, help='The number of passes.')
+    parser.add_argument(
+        '--order',
+        type=str,
+        default='NCHW',
+        choices=['NCHW', 'NHWC'],
+        help='The data order, now only support NCHW.')
+    parser.add_argument(
+        '--device', type=str, default='GPU', choices=['CPU', 'GPU'], help='The device type.')
+    parser.add_argument(
+        '--infer_only', action='store_true', help='If set, run forward only.')
+    parser.add_argument(
+        '--use_cprof', action='store_true', help='If set, use cProfile.')
+    parser.add_argument(
+        '--use_nvprof',
+        action='store_false',
+        help='If set, use nvprof for CUDA.')
+    args = parser.parse_args()
+    return args
+
+
+def print_arguments(args):
+    print('-----------  Configuration Arguments -----------')
+    for arg, value in sorted(vars(args).iteritems()):
+        print('%s: %s' % (arg, value))
+    print('------------------------------------------------')
 
 
 def batch_norm_relu(inputs, is_training, data_format):
@@ -44,7 +63,7 @@ def batch_norm_relu(inputs, is_training, data_format):
   # https://www.tensorflow.org/performance/performance_guide#common_fused_ops
   inputs = tf.layers.batch_normalization(
       inputs=inputs, axis=1 if data_format == 'channels_first' else 3,
-      momentum=_BATCH_NORM_DECAY, epsilon=_BATCH_NORM_EPSILON, center=True,
+      momentum=0.9, epsilon=1e-05, center=True,
       scale=True, training=is_training, fused=True)
   inputs = tf.nn.relu(inputs)
   return inputs
@@ -206,70 +225,8 @@ def block_layer(inputs, filters, block_fn, blocks, strides, is_training, name,
   return tf.identity(inputs, name)
 
 
-def cifar10_resnet_v2_generator(resnet_size, num_classes, data_format=None):
-  """Generator for CIFAR-10 ResNet v2 models.
-  Args:
-    resnet_size: A single integer for the size of the ResNet model.
-    num_classes: The number of possible classes for image classification.
-    data_format: The input format ('channels_last', 'channels_first', or None).
-      If set to None, the format is dependent on whether a GPU is available.
-  Returns:
-    The model function that takes in `inputs` and `is_training` and
-    returns the output tensor of the ResNet model.
-  Raises:
-    ValueError: If `resnet_size` is invalid.
+def resnet_generator(block_fn, layers, num_classes, data_format='channels_first'):
   """
-  if resnet_size % 6 != 2:
-    raise ValueError('resnet_size must be 6n + 2:', resnet_size)
-
-  num_blocks = (resnet_size - 2) // 6
-
-  if data_format is None:
-    data_format = (
-        'channels_first' if tf.test.is_built_with_cuda() else 'channels_last')
-
-  def model(inputs, is_training):
-    """Constructs the ResNet model given the inputs."""
-    if data_format == 'channels_first':
-      # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
-      # This provides a large performance boost on GPU. See
-      # https://www.tensorflow.org/performance/performance_guide#data_formats
-      inputs = tf.transpose(inputs, [0, 3, 1, 2])
-
-    inputs = conv2d_fixed_padding(
-        inputs=inputs, filters=16, kernel_size=3, strides=1,
-        data_format=data_format)
-    inputs = tf.identity(inputs, 'initial_conv')
-
-    inputs = block_layer(
-        inputs=inputs, filters=16, block_fn=building_block, blocks=num_blocks,
-        strides=1, is_training=is_training, name='block_layer1',
-        data_format=data_format)
-    inputs = block_layer(
-        inputs=inputs, filters=32, block_fn=building_block, blocks=num_blocks,
-        strides=2, is_training=is_training, name='block_layer2',
-        data_format=data_format)
-    inputs = block_layer(
-        inputs=inputs, filters=64, block_fn=building_block, blocks=num_blocks,
-        strides=2, is_training=is_training, name='block_layer3',
-        data_format=data_format)
-
-    inputs = batch_norm_relu(inputs, is_training, data_format)
-    inputs = tf.layers.average_pooling2d(
-        inputs=inputs, pool_size=8, strides=1, padding='VALID',
-        data_format=data_format)
-    inputs = tf.identity(inputs, 'final_avg_pool')
-    inputs = tf.reshape(inputs, [-1, 64])
-    inputs = tf.layers.dense(inputs=inputs, units=num_classes)
-    inputs = tf.identity(inputs, 'final_dense')
-    return inputs
-
-  return model
-
-
-def imagenet_resnet_v2_generator(block_fn, layers, num_classes,
-                                 data_format=None):
-  """Generator for ImageNet ResNet v2 models.
   Args:
     block_fn: The block to use within the model, either `building_block` or
       `bottleneck_block`.
@@ -282,17 +239,14 @@ def imagenet_resnet_v2_generator(block_fn, layers, num_classes,
     The model function that takes in `inputs` and `is_training` and
     returns the output tensor of the ResNet model.
   """
-  if data_format is None:
-    data_format = (
-        'channels_first' if tf.test.is_built_with_cuda() else 'channels_last')
 
   def model(inputs, is_training):
     """Constructs the ResNet model given the inputs."""
-    if data_format == 'channels_first':
-      # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
-      # This provides a large performance boost on GPU. See
-      # https://www.tensorflow.org/performance/performance_guide#data_formats
-      inputs = tf.transpose(inputs, [0, 3, 1, 2])
+    # if data_format == 'channels_first':
+    #   # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
+    #   # This provides a large performance boost on GPU. See
+    #   # https://www.tensorflow.org/performance/performance_guide#data_formats
+    #   inputs = tf.transpose(inputs, [0, 3, 1, 2])
 
     inputs = conv2d_fixed_padding(
         inputs=inputs, filters=64, kernel_size=7, strides=2,
@@ -334,7 +288,7 @@ def imagenet_resnet_v2_generator(block_fn, layers, num_classes,
   return model
 
 
-def imagenet_resnet_v2(resnet_size, num_classes, data_format=None):
+def resnet(depth, class_dim):
   """Returns the ResNet model for a given size and number of output classes."""
   model_params = {
       18: {'block': building_block, 'layers': [2, 2, 2, 2]},
@@ -345,9 +299,70 @@ def imagenet_resnet_v2(resnet_size, num_classes, data_format=None):
       200: {'block': bottleneck_block, 'layers': [3, 24, 36, 3]}
   }
 
-  if resnet_size not in model_params:
-    raise ValueError('Not a valid resnet_size:', resnet_size)
+  if depth not in model_params:
+    raise ValueError('Not a valid depth:', depth)
 
-  params = model_params[resnet_size]
-  return imagenet_resnet_v2_generator(
-      params['block'], params['layers'], num_classes, data_format)
+  params = model_params[depth]
+
+  return resnet_generator(params['block'], params['layers'], class_dim)
+
+
+def run_benchmark(batch_size):
+    """Our model_fn for ResNet to be used with our Estimator."""
+
+    class_dim = 102
+
+    images = tf.placeholder(DTYPE, shape=(None, 3, 224, 224))
+    labels = tf.placeholder(tf.int64, shape=(None,))
+
+    network = resnet(50, class_dim)
+    logits = network(inputs=images, is_training=True)
+
+    # Calculate loss, which includes softmax cross entropy and L2 regularization.
+    cross_entropy = tf.losses.softmax_cross_entropy(
+        logits=logits, onehot_labels=labels)
+    avg_cost = tf.reduce_mean(cross_entropy)
+
+    correct = tf.equal(tf.argmax(logits, 1), labels)
+    accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
+    g_accuracy = tf.metrics.accuracy(labels, tf.argmax(logits, axis=1))
+
+    optimizer = tf.train.MomentumOptimizer(learning_rate=0.01, momentum=0.9)
+
+    # Batch norm requires update_ops to be added as a train_op dependency.
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+      train_op = optimizer.minimize(avg_cost)
+
+    train_reader = paddle.batch(
+        paddle.reader.shuffle(
+            paddle.dataset.flowers.train(), buf_size=5120),
+        batch_size=batch_size)
+
+    dshape = [3, 224, 224]
+
+    with tf.Session() as sess:
+        init_g = tf.global_variables_initializer()
+        init_l = tf.local_variables_initializer()
+        sess.run(init_g)
+        sess.run(init_l)
+
+        for pass_id in range(args.pass_num):
+            for batch_id, data in enumerate(train_reader()):
+                images_data = np.array(map(lambda x: x[0].reshape(dshape), data)).astype('float32')
+                labels_data = np.array(map(lambda x: x[1], data)).astype('int64').reshape([-1, 1])
+                _, loss, acc, g_acc = sess.run(
+                    [train_op, avg_cost, accuracy, g_accuracy],
+                    feed_dict={images: images_data, labels: labels_data})
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    print_arguments(args)
+    if args.order == 'NHWC':
+        raise ValueError('Only support NCHW order now.')
+    if args.use_nvprof and args.device == 'GPU':
+        with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
+            run_benchmark(args.batch_size)
+    else:
+        run_benchmark(args.batch_size)
