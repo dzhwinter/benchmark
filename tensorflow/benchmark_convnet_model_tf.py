@@ -256,10 +256,8 @@ def block_layer(inputs, filters, block_fn, blocks, strides, is_training, name,
     return tf.identity(inputs, name)
 
 
-def resnet_generator(block_fn,
-                     layers,
-                     num_classes,
-                     data_format='channels_first'):
+def resnet_generator(block_fn, layers, num_classes,
+                     data_format='channels_last'):
     """
   Args:
     block_fn: The block to use within the model, either `building_block` or
@@ -273,14 +271,17 @@ def resnet_generator(block_fn,
     The model function that takes in `inputs` and `is_training` and
     returns the output tensor of the ResNet model.
   """
+    if data_format is None:
+        data_format = ('channels_first'
+                       if tf.test.is_built_with_cuda() else 'channels_last')
 
     def model(inputs, is_training):
         """Constructs the ResNet model given the inputs."""
-        # if data_format == 'channels_first':
-        #   # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
-        #   # This provides a large performance boost on GPU. See
-        #   # https://www.tensorflow.org/performance/performance_guide#data_formats
-        #   inputs = tf.transpose(inputs, [0, 3, 1, 2])
+        if data_format == 'channels_first':
+            # Convert the inputs from channels_last (NHWC) to channels_first (NCHW).
+            # This provides a large performance boost on GPU. See
+            # https://www.tensorflow.org/performance/performance_guide#data_formats
+            inputs = tf.transpose(inputs, [0, 3, 1, 2])
 
         inputs = conv2d_fixed_padding(
             inputs=inputs,
@@ -388,12 +389,15 @@ def resnet(depth, class_dim):
     return resnet_generator(params['block'], params['layers'], class_dim)
 
 
-def run_benchmark(batch_size):
+def run_benchmark(batch_size, data_format='channels_last'):
     """Our model_fn for ResNet to be used with our Estimator."""
 
     class_dim = 102
 
-    images = tf.placeholder(DTYPE, shape=(None, 3, 224, 224))
+    dshape = (None, 3, 224, 224) if data_format == 'channels_first' else (
+        None, 224, 224, 3)
+
+    images = tf.placeholder(DTYPE, shape=dshape)
     labels = tf.placeholder(tf.int64, shape=(None, ))
     one_hot_labels = tf.one_hot(labels, depth=class_dim)
 
@@ -421,8 +425,6 @@ def run_benchmark(batch_size):
             paddle.dataset.flowers.train(), buf_size=5120),
         batch_size=batch_size)
 
-    dshape = [3, 224, 224]
-
     with tf.Session() as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
@@ -432,7 +434,7 @@ def run_benchmark(batch_size):
         for pass_id in range(args.pass_num):
             for batch_id, data in enumerate(train_reader()):
                 images_data = np.array(
-                    map(lambda x: x[0].reshape(dshape), data)).astype('float32')
+                    map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
                 labels_data = np.array(map(lambda x: x[1], data)).astype(
                     'int64')
                 _, loss, acc, g_acc = sess.run(
