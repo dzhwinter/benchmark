@@ -154,7 +154,7 @@ def run_benchmark(model, args):
                 fetch_list=[cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
             print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (iter, str(loss), str(acc), str(pass_acc)))
+                  (it, str(loss), str(acc), str(pass_acc)))
 
 
 if __name__ == '__main__':
