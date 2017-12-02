@@ -441,6 +441,8 @@ def run_benchmark(batch_size, data_format='channels_last'):
                     [train_op, avg_cost, accuracy, g_accuracy],
                     feed_dict={images: images_data,
                                labels: labels_data})
+                print("pass=%d, batch=%d, loss=%f, acc=%f\n" %
+                      (pass_id, batch_id, loss, acc))
 
 
 if __name__ == '__main__':
