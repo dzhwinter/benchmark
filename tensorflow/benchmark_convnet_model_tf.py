@@ -8,6 +8,7 @@ from __future__ import print_function
 
 import argparse
 
+import time
 import numpy as np
 import paddle.v2 as paddle
 import tensorflow as tf
@@ -25,6 +26,8 @@ def parse_args():
         help='The model architecture.')
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
+    parser.add_argument(
+        '--iterations', type=int, default=35, help='The number of minibatches.')
     parser.add_argument(
         '--pass_num', type=int, default=100, help='The number of passes.')
     parser.add_argument(
@@ -387,33 +390,35 @@ def resnet(depth, class_dim, data_format):
                             data_format)
 
 
-def run_benchmark(args, data_format='channels_last'):
+def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
     """Our model_fn for ResNet to be used with our Estimator."""
+    start_time = time.time()
 
     class_dim = 102
     dshape = (None, 224, 224, 3)
 
-    images = tf.placeholder(DTYPE, shape=dshape)
-    labels = tf.placeholder(tf.int64, shape=(None, ))
-    one_hot_labels = tf.one_hot(labels, depth=class_dim)
+    with tf.device(device):
+        images = tf.placeholder(DTYPE, shape=dshape)
+        labels = tf.placeholder(tf.int64, shape=(None, ))
+        one_hot_labels = tf.one_hot(labels, depth=class_dim)
 
-    network = resnet(50, class_dim, data_format)
-    logits = network(inputs=images, is_training=True)
+        network = resnet(50, class_dim, data_format)
+        logits = network(inputs=images, is_training=True)
 
-    cross_entropy = tf.losses.softmax_cross_entropy(
-        logits=logits, onehot_labels=one_hot_labels)
-    avg_cost = tf.reduce_mean(cross_entropy)
+        cross_entropy = tf.losses.softmax_cross_entropy(
+            logits=logits, onehot_labels=one_hot_labels)
+        avg_cost = tf.reduce_mean(cross_entropy)
 
-    correct = tf.equal(tf.argmax(logits, 1), labels)
-    accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
-    g_accuracy = tf.metrics.accuracy(labels, tf.argmax(logits, axis=1))
+        correct = tf.equal(tf.argmax(logits, 1), labels)
+        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
+        g_accuracy = tf.metrics.accuracy(labels, tf.argmax(logits, axis=1))
 
-    optimizer = tf.train.MomentumOptimizer(learning_rate=0.01, momentum=0.9)
+        optimizer = tf.train.MomentumOptimizer(learning_rate=0.01, momentum=0.9)
 
-    # Batch norm requires update_ops to be added as a train_op dependency.
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    with tf.control_dependencies(update_ops):
-        train_op = optimizer.minimize(avg_cost)
+        # Batch norm requires update_ops to be added as a train_op dependency.
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_op = optimizer.minimize(avg_cost)
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
@@ -428,6 +433,9 @@ def run_benchmark(args, data_format='channels_last'):
 
         for pass_id in range(args.pass_num):
             for batch_id, data in enumerate(train_reader()):
+                # for debug
+                if batch_id == args.iterations:
+                    break
                 images_data = np.array(
                     map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
                 labels_data = np.array(map(lambda x: x[1], data)).astype(
@@ -439,19 +447,30 @@ def run_benchmark(args, data_format='channels_last'):
                 print("pass=%d, batch=%d, loss=%f, acc=%f\n" %
                       (pass_id, batch_id, loss, acc))
 
+        duration = time.time() - start_time
+        examples_per_sec = args.iterations * args.batch_size / duration
+        sec_per_batch = duration / args.batch_size
+
+        print('\nTotal examples: %d, total time: %.5f' %
+              (args.iterations * args.batch_size, duration))
+        print('%.5f examples/sec, %.5f sec/batch \n' %
+              (examples_per_sec, sec_per_batch))
+
 
 if __name__ == '__main__':
     args = parse_args()
     print_arguments(args)
     if tf.test.is_built_with_cuda():
+        device = '/device:GPU:0'
         if args.order == 'NHWC':
             data_format = 'channels_last'
         else:
             data_format = 'channels_first'
     else:
+        device = '/cpu:0'
         if args.order == 'NHWC':
             data_format = 'channels_last'
         else:
             raise ValueError('Only support NHWC order in CPU mode')
 
-    run_benchmark(args, data_format)
+    run_benchmark(args, data_format, device)
