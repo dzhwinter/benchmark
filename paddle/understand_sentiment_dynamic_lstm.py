@@ -18,11 +18,11 @@ def parse_args():
     parser.add_argument(
         '--stacked_num', type=int, default=3, help='Stacked LSTM Layer size.')
     parser.add_argument(
-        '--emb_dim', type=int, default=128, help='The embedding dim.')
+        '--emb_dim', type=int, default=32, help='The embedding dim.')
     parser.add_argument(
         '--hid_dim',
         type=int,
-        default=512,
+        default=32,
         help='The sequence length of one sentence.')
     parser.add_argument(
         '--iterations', type=int, default=35, help='The number of minibatches.')
@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument(
         '--device',
         type=str,
-        default='GPU',
+        default='CPU',
         choices=['CPU', 'GPU'],
         help='The device type.')
     parser.add_argument(
@@ -110,10 +110,15 @@ def run_benchmark(model, args):
     print("load word dict successfully")
 
     dict_dim = len(word_dict)
+    # data = fluid.layers.data(
+    #     name="words", shape=[1], append_batch_size=False, dtype="int64")
+    # label = fluid.layers.data(
+    #     name="label", shape=[1], append_batch_size=False, dtype="int64")
+
     data = fluid.layers.data(
-        name="words", shape=[1], append_batch_size=False, dtype="int64")
-    label = fluid.layers.data(
-        name="label", shape=[1], append_batch_size=False, dtype="int64")
+        name="words", shape=[1], dtype="int64", lod_level=1)
+    label = fluid.layers.data(name="label", shape=[1], dtype="int64")
+
     prediction = model(data, dict_dim)
     cost = fluid.layers.cross_entropy(input=prediction, label=label)
     avg_cost = fluid.layers.mean(x=cost)
@@ -123,7 +128,8 @@ def run_benchmark(model, args):
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.flowers.train(), buf_size=args.batch_size * 10),
+            paddle.dataset.imdb.train(word_dict),
+            buf_size=args.batch_size * 10),
         batch_size=args.batch_size)
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
@@ -146,7 +152,7 @@ def run_benchmark(model, args):
                 fluid.default_main_program(),
                 feed={"words": tensor_words,
                       "label": tensor_label},
-                fetch_list=[cost] + accuracy.metrics)
+                fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
             print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
                   (it, str(loss), str(acc), str(pass_acc)))
