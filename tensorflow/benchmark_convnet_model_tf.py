@@ -10,7 +10,6 @@ import argparse
 
 import numpy as np
 import paddle.v2 as paddle
-import paddle.v2.fluid.profiler as profiler
 import tensorflow as tf
 
 DTYPE = tf.float32
@@ -350,7 +349,7 @@ def resnet_generator(block_fn, layers, num_classes,
     return model
 
 
-def resnet(depth, class_dim):
+def resnet(depth, class_dim, data_format):
     """Returns the ResNet model for a given size and number of output classes."""
     model_params = {
         18: {
@@ -384,22 +383,21 @@ def resnet(depth, class_dim):
 
     params = model_params[depth]
 
-    return resnet_generator(params['block'], params['layers'], class_dim)
+    return resnet_generator(params['block'], params['layers'], class_dim,
+                            data_format)
 
 
 def run_benchmark(args, data_format='channels_last'):
     """Our model_fn for ResNet to be used with our Estimator."""
 
     class_dim = 102
-
-    dshape = (None, 3, 224, 224) if data_format == 'channels_first' else (
-        None, 224, 224, 3)
+    dshape = (None, 224, 224, 3)
 
     images = tf.placeholder(DTYPE, shape=dshape)
     labels = tf.placeholder(tf.int64, shape=(None, ))
     one_hot_labels = tf.one_hot(labels, depth=class_dim)
 
-    network = resnet(50, class_dim)
+    network = resnet(50, class_dim, data_format)
     logits = network(inputs=images, is_training=True)
 
     cross_entropy = tf.losses.softmax_cross_entropy(
@@ -446,15 +444,14 @@ if __name__ == '__main__':
     args = parse_args()
     print_arguments(args)
     if tf.test.is_built_with_cuda():
-        data_format = 'channels_first'
         if args.order == 'NHWC':
-            raise ValueError('Only support NCHW order in GPU mode.')
+            data_format = 'channels_last'
+        else:
+            data_format = 'channels_first'
     else:
-        data_format = 'channels_last'
-        if args.order == 'NCHW':
+        if args.order == 'NHWC':
+            data_format = 'channels_last'
+        else:
             raise ValueError('Only support NHWC order in CPU mode')
-    if args.use_nvprof and args.device == 'GPU':
-        with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
-            run_benchmark(args, data_format)
-    else:
-        run_benchmark(args, data_format)
+
+    run_benchmark(args, data_format)
