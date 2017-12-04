@@ -69,8 +69,8 @@ def lstm_model(data, dict_dim, class_dim=2):
     for i in range(stacked_num):
         layer_1_out = fluid.layers.lstm(
             layer_1_out, c_pre_init=c_pre_init, hidden_dim=emb_dim)
-        layer_1_out = fluid.layers.transpose(x=layer_1_out, axis=[1, 0, 2])
 
+    layer_1_out = fluid.layers.transpose(x=layer_1_out, axis=[1, 0, 2])
     prediction = fluid.layers.fc(input=layer_1_out,
                                  size=class_dim,
                                  act="softmax")
