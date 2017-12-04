@@ -431,10 +431,12 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
         sess.run(init_g)
         sess.run(init_l)
 
+        iter = 0
         for pass_id in range(args.pass_num):
+            if iter == args.iterations:
+                break
             for batch_id, data in enumerate(train_reader()):
-                # for debug
-                if batch_id == args.iterations:
+                if iter == args.iterations:
                     break
                 images_data = np.array(
                     map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
@@ -446,13 +448,14 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                                labels: labels_data})
                 print("pass=%d, batch=%d, loss=%f, acc=%f\n" %
                       (pass_id, batch_id, loss, acc))
+                iter += 1
 
         duration = time.time() - start_time
         examples_per_sec = args.iterations * args.batch_size / duration
         sec_per_batch = duration / args.batch_size
 
         print('\nTotal examples: %d, total time: %.5f' %
-              (args.iterations * args.batch_size, duration))
+              (iter * args.batch_size, duration))
         print('%.5f examples/sec, %.5f sec/batch \n' %
               (examples_per_sec, sec_per_batch))
 
