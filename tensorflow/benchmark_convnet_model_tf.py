@@ -1,5 +1,5 @@
 """
-https://github.com/tensorflow/models/blob/master/official/resnet/resnet_model.py
+based on https://github.com/tensorflow/models/blob/master/official/resnet/resnet_model.py
 """
 
 from __future__ import absolute_import
@@ -10,7 +10,7 @@ import argparse
 
 import numpy as np
 import paddle.v2 as paddle
-#import paddle.v2.fluid.profiler as profiler
+import paddle.v2.fluid.profiler as profiler
 import tensorflow as tf
 
 DTYPE = tf.float32
@@ -27,19 +27,17 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
-        '--iterations', type=int, default=35, help='The number of minibatches.')
-    parser.add_argument(
         '--pass_num', type=int, default=100, help='The number of passes.')
     parser.add_argument(
         '--order',
         type=str,
-        default='NCHW',
+        default='NHWC',
         choices=['NCHW', 'NHWC'],
         help='The data order, now only support NCHW.')
     parser.add_argument(
         '--device',
         type=str,
-        default='GPU',
+        default='CPU',
         choices=['CPU', 'GPU'],
         help='The device type.')
     parser.add_argument(
@@ -389,7 +387,7 @@ def resnet(depth, class_dim):
     return resnet_generator(params['block'], params['layers'], class_dim)
 
 
-def run_benchmark(batch_size, data_format='channels_last'):
+def run_benchmark(args, data_format='channels_last'):
     """Our model_fn for ResNet to be used with our Estimator."""
 
     class_dim = 102
@@ -404,7 +402,6 @@ def run_benchmark(batch_size, data_format='channels_last'):
     network = resnet(50, class_dim)
     logits = network(inputs=images, is_training=True)
 
-    # Calculate loss, which includes softmax cross entropy and L2 regularization.
     cross_entropy = tf.losses.softmax_cross_entropy(
         logits=logits, onehot_labels=one_hot_labels)
     avg_cost = tf.reduce_mean(cross_entropy)
@@ -423,7 +420,7 @@ def run_benchmark(batch_size, data_format='channels_last'):
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.flowers.train(), buf_size=5120),
-        batch_size=batch_size)
+        batch_size=args.batch_size)
 
     with tf.Session() as sess:
         init_g = tf.global_variables_initializer()
@@ -448,10 +445,16 @@ def run_benchmark(batch_size, data_format='channels_last'):
 if __name__ == '__main__':
     args = parse_args()
     print_arguments(args)
-    if args.order == 'NHWC':
-        raise ValueError('Only support NCHW order now.')
-    if args.use_nvprof and args.device == 'GPU':
-        #with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
-        run_benchmark(args.batch_size)
+    if tf.test.is_built_with_cuda():
+        data_format = 'channels_first'
+        if args.order == 'NHWC':
+            raise ValueError('Only support NCHW order in GPU mode.')
     else:
-        run_benchmark(args.batch_size)
+        data_format = 'channels_last'
+        if args.order == 'NCHW':
+            raise ValueError('Only support NHWC order in CPU mode')
+    if args.use_nvprof and args.device == 'GPU':
+        with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
+            run_benchmark(args, data_format)
+    else:
+        run_benchmark(args, data_format)
