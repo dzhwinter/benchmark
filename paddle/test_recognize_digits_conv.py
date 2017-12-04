@@ -8,6 +8,7 @@ import paddle.v2.fluid.nets as nets
 from paddle.v2.fluid.executor import Executor
 from paddle.v2.fluid.optimizer import AdamOptimizer
 from paddle.v2.fluid.initializer import NormalInitializer
+from paddle.v2.fluid.param_attr import ParamAttr
 import numpy as np
 import time
 
@@ -42,8 +43,8 @@ scale = (2.0 / (param_shape[0]**2 * SIZE))**0.5
 predict = layers.fc(input=conv_pool_2,
                     size=SIZE,
                     act="softmax",
-                    param_initializer=NormalInitializer(
-                        loc=0.0, scale=scale, seed=SEED))
+                    param_attr=ParamAttr(initializer=NormalInitializer(
+                        loc=0.0, scale=scale, seed=SEED)))
 
 cost = layers.cross_entropy(input=predict, label=label)
 avg_cost = layers.mean(x=cost)
