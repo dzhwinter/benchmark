@@ -16,6 +16,8 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
+        '--stacked_num', type=int, default=1, help='Stacked LSTM Layer num.')
+    parser.add_argument(
         '--emb_dim', type=int, default=32, help='The embedding dim.')
     parser.add_argument(
         '--seq_len',
@@ -55,6 +57,7 @@ def lstm_model(data, dict_dim, class_dim=2):
     batch_size = args.batch_size
     emb_dim = args.emb_dim
     seq_len = args.seq_len
+    stacked_num = args.stacked_num
 
     emb = fluid.layers.embedding(input=data, size=[dict_dim, emb_dim])
     emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, args.emb_dim])
@@ -62,9 +65,11 @@ def lstm_model(data, dict_dim, class_dim=2):
 
     c_pre_init = fluid.layers.fill_constant(
         dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
-    layer_1_out = fluid.layers.lstm(
-        emb, c_pre_init=c_pre_init, hidden_dim=emb_dim)
-    layer_1_out = fluid.layers.transpose(x=layer_1_out, axis=[1, 0, 2])
+    layer_1_out = emb
+    for i in range(stacked_num):
+        layer_1_out = fluid.layers.lstm(
+            layer_1_out, c_pre_init=c_pre_init, hidden_dim=emb_dim)
+        layer_1_out = fluid.layers.transpose(x=layer_1_out, axis=[1, 0, 2])
 
     prediction = fluid.layers.fc(input=layer_1_out,
                                  size=class_dim,
@@ -151,7 +156,7 @@ def run_benchmark(model, args):
                 fluid.default_main_program(),
                 feed={"words": tensor_words,
                       "label": tensor_label},
-                fetch_list=[cost] + accuracy.metrics)
+                fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
             print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
                   (it, str(loss), str(acc), str(pass_acc)))
