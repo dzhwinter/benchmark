@@ -100,7 +100,7 @@ def run_benchmark(model):
         init_l = tf.local_variables_initializer()
         sess.run(init_l)
         sess.run(init_g)
-        for it in enumerate(xrange(FLAGS.pass_num)):
+        for it in xrange(FLAGS.pass_num):
             if it == FLAGS.iterations:
                 break
             for batch in train_reader():
