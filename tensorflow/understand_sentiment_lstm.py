@@ -6,6 +6,7 @@ import numpy as np
 import time
 
 import tensorflow as tf
+from tensorflow.contrib import rnn
 import paddle.v2 as paddle
 
 FLAGS = tf.app.flags.FLAGS
@@ -35,24 +36,36 @@ def lstm_model(data, dict_dim, class_dim=2):
         embedding = tf.Variable(tf.truncated_normal([dict_dim, emb_dim]))
 
         # NOTE(dzhwinter) : paddle dynamic_lstm(lstm_op) do not have peepholes
+
+        lstm_input = tf.nn.embedding_lookup(embedding, data)
+
+        lstm_input = tf.unstack(lstm_input, seq_len, 1)
+        # lstm_cell = rnn.BasicLSTMCell(emb_dim, forget_bias=1.0)
         lstm_cell = tf.nn.rnn_cell.LSTMCell(
-            num_units=seq_len, use_peepholes=False)
-        cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * emb_dim)
+            num_units=emb_dim, use_peepholes=False)
+        # cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * emb_dim)
 
-        rnn_data = tf.unstack(data)
-
-        initial_state = cell.zero_state(batch_size, dtype=tf.float32)
-        outputs, state = tf.nn.static_rnn(
-            cell, rnn_data, initial_state=initial_state, dtype=tf.float32)
+        initial_state = lstm_cell.zero_state(batch_size, dtype=tf.float32)
+        # outputs, state = tf.nn.dynamic_rnn(
+        #     lstm_cell, lstm_input, initial_state=initial_state, dtype=tf.float32)
+        outputs, states = rnn.static_rnn(
+            lstm_cell, lstm_input, dtype=tf.float32)
         last_output = outputs[-1]
 
         fc_weights = tf.Variable(
             tf.truncated_normal([emb_dim, class_dim]), dtype=tf.float32)
-        bias = tf.Variable(tf.constant_initializer(value=0.0, dtype=tf.float32))
+        bias = tf.Variable(
+            tf.constant(
+                value=0.0, shape=[class_dim], dtype=tf.float32))
 
-        prediction = tf.matmul(fc_weights) + bias
+        prediction = tf.matmul(last_output, fc_weights) + bias
 
     return prediction
+
+
+def padding_data(data, padding_size, value):
+    data = data + [value] * padding_size
+    return data[:padding_size]
 
 
 def run_benchmark(model):
@@ -70,10 +83,11 @@ def run_benchmark(model):
     data = tf.placeholder(tf.int64, shape=[None, FLAGS.seq_len])
     label = tf.placeholder(tf.int64, shape=[None])
     prediction = model(data, dict_dim)
-    cost = tf.nn.softmax_cross_entropy_with_logits(prediction, label)
+    cost = tf.nn.softmax_cross_entropy_with_logits(
+        labels=tf.one_hot(label, 2), logits=prediction)
     avg_cost = tf.reduce_mean(cost)
     adam_optimizer = tf.train.AdamOptimizer(learning_rate=0.002)
-    train_op = adam_optimizer.minimizer(avg_cost)
+    train_op = adam_optimizer.minimize(avg_cost)
 
     correct = tf.equal(tf.argmax(prediction, 1), label)
     accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
@@ -81,21 +95,28 @@ def run_benchmark(model):
 
     config = tf.ConfigProto(
         intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
-    with tf.Session(config) as sess:
-        sess.run(tf.initialize_all_variables())
+    with tf.Session(config=config) as sess:
+        init_g = tf.global_variables_initializer()
+        init_l = tf.local_variables_initializer()
+        sess.run(init_l)
+        sess.run(init_g)
         for it in enumerate(xrange(FLAGS.pass_num)):
-            if it == args.iterations:
+            if it == FLAGS.iterations:
                 break
-            for data in train_reader():
+            for batch in train_reader():
 
-                word_data = np.array(map(lambda x: x[0], data)).astype("int64")
-                label_data = np.array(map(lambda x: x[1], data)).astype("int64")
+                word_data = np.array(
+                    map(lambda x: padding_data(x[0], FLAGS.seq_len, 0),
+                        batch)).astype("int64")
+                label_data = np.array(map(lambda x: x[1], batch)).astype(
+                    "int64")
+
                 _, loss, acc, pass_acc = sess.run(
                     [train_op, avg_cost, accuracy, pass_accuracy],
                     feed_dict={data: word_data,
                                label: label_data})
                 print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                      (iter, str(loss), str(acc), str(pass_acc)))
+                      (it, str(loss), str(acc), str(pass_acc)))
 
 
 def main(_):
