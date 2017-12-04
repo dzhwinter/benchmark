@@ -104,7 +104,9 @@ g_accuracy = tf.metrics.accuracy(labels, tf.argmax(prediction, axis=1))
 optimizer = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
 train_op = optimizer.minimize(avg_cost)
 
-with tf.Session() as sess:
+config = tf.ConfigProto(
+    intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+with tf.Session(config=config) as sess:
     init_g = tf.global_variables_initializer()
     init_l = tf.local_variables_initializer()
     sess.run(init_g)
