@@ -63,16 +63,14 @@ def dynamic_lstm_model(data, dict_dim, class_dim=2):
 
     emb = fluid.layers.embedding(input=data, size=[dict_dim, emb_dim])
 
-    # TODO(qijun) linear act
     fc1 = fluid.layers.fc(input=emb, size=hid_dim)
     lstm1, cell1 = fluid.layers.dynamic_lstm(input=fc1, size=hid_dim)
 
     inputs = [fc1, lstm1]
 
-    for i in range(2, stacked_num + 1):
+    for i in range(stacked_num):
         fc = fluid.layers.fc(input=inputs, size=hid_dim)
-        lstm, cell = fluid.layers.dynamic_lstm(
-            input=fc, size=hid_dim, is_reverse=(i % 2) == 0)
+        lstm, cell = fluid.layers.dynamic_lstm(input=fc, size=hid_dim)
         inputs = [fc, lstm]
 
     fc_last = fluid.layers.sequence_pool(input=inputs[0], pool_type='max')
@@ -110,10 +108,6 @@ def run_benchmark(model, args):
     print("load word dict successfully")
 
     dict_dim = len(word_dict)
-    # data = fluid.layers.data(
-    #     name="words", shape=[1], append_batch_size=False, dtype="int64")
-    # label = fluid.layers.data(
-    #     name="label", shape=[1], append_batch_size=False, dtype="int64")
 
     data = fluid.layers.data(
         name="words", shape=[1], dtype="int64", lod_level=1)
