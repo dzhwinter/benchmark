@@ -115,8 +115,7 @@ def run_benchmark(model, args):
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.imdb.train(word_dict),
-            buf_size=args.batch_size * 10),
+            paddle.dataset.imdb.train(word_dict), buf_size=25000),
         batch_size=args.batch_size)
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
