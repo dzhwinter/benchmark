@@ -59,24 +59,17 @@ def dynamic_lstm_model(data, dict_dim, class_dim=2):
     hid_dim = args.hid_dim
     stacked_num = args.stacked_num
 
-    assert stacked_num % 2 == 1, "Must stacked_num %2 == 1."
-
     emb = fluid.layers.embedding(input=data, size=[dict_dim, emb_dim])
 
-    fc1 = fluid.layers.fc(input=emb, size=hid_dim)
-    lstm1, cell1 = fluid.layers.dynamic_lstm(input=fc1, size=hid_dim)
-
-    inputs = [fc1, lstm1]
+    inputs = emb
 
     for i in range(stacked_num):
         fc = fluid.layers.fc(input=inputs, size=hid_dim)
         lstm, cell = fluid.layers.dynamic_lstm(input=fc, size=hid_dim)
-        inputs = [fc, lstm]
+        inputs = lstm
+    lstm_last = fluid.layers.sequence_pool(input=inputs, pool_type='max')
 
-    fc_last = fluid.layers.sequence_pool(input=inputs[0], pool_type='max')
-    lstm_last = fluid.layers.sequence_pool(input=inputs[1], pool_type='max')
-
-    prediction = fluid.layers.fc(input=[fc_last, lstm_last],
+    prediction = fluid.layers.fc(input=[lstm_last],
                                  size=class_dim,
                                  act='softmax')
 
