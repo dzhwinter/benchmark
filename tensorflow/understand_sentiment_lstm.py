@@ -12,6 +12,7 @@ import paddle.v2 as paddle
 FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_integer('batch_size', 32, """Batch size.""")
 tf.app.flags.DEFINE_integer('emb_dim', 32, "The embedding dim.")
+tf.app.flags.DEFINE_integer('stacked_num', 3, "Stacked LSTM Layer size.")
 tf.app.flags.DEFINE_integer('seq_len', 80,
                             "The sequence length of one sentence.")
 tf.app.flags.DEFINE_integer('iterations', 35, """Number of batches to run.""")
@@ -31,6 +32,7 @@ def lstm_model(data, dict_dim, class_dim=2):
     batch_size = FLAGS.batch_size
     emb_dim = FLAGS.emb_dim
     seq_len = FLAGS.seq_len
+    stacked_num = FLAGS.stacked_num
 
     with tf.name_scope("lstm") as scope:
         embedding = tf.Variable(tf.truncated_normal([dict_dim, emb_dim]))
@@ -42,8 +44,8 @@ def lstm_model(data, dict_dim, class_dim=2):
         lstm_input = tf.unstack(lstm_input, seq_len, 1)
         lstm_cell = tf.nn.rnn_cell.LSTMCell(
             num_units=emb_dim, use_peepholes=False)
+        lstm_cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * stacked_num)
 
-        initial_state = lstm_cell.zero_state(batch_size, dtype=tf.float32)
         outputs, states = rnn.static_rnn(
             lstm_cell, lstm_input, dtype=tf.float32)
         last_output = outputs[-1]
@@ -73,7 +75,7 @@ def run_benchmark(model):
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.imdb.train(word_dict),
-            buf_size=FLAGS.batch_size * 10),
+            buf_size=25000),  # imdb is in buf_size
         batch_size=FLAGS.batch_size)
 
     data = tf.placeholder(tf.int64, shape=[None, FLAGS.seq_len])
