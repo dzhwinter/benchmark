@@ -40,14 +40,10 @@ def lstm_model(data, dict_dim, class_dim=2):
         lstm_input = tf.nn.embedding_lookup(embedding, data)
 
         lstm_input = tf.unstack(lstm_input, seq_len, 1)
-        # lstm_cell = rnn.BasicLSTMCell(emb_dim, forget_bias=1.0)
         lstm_cell = tf.nn.rnn_cell.LSTMCell(
             num_units=emb_dim, use_peepholes=False)
-        # cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * emb_dim)
 
         initial_state = lstm_cell.zero_state(batch_size, dtype=tf.float32)
-        # outputs, state = tf.nn.dynamic_rnn(
-        #     lstm_cell, lstm_input, initial_state=initial_state, dtype=tf.float32)
         outputs, states = rnn.static_rnn(
             lstm_cell, lstm_input, dtype=tf.float32)
         last_output = outputs[-1]
