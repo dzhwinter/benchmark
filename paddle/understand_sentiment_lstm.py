@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
-        '--stacked_num', type=int, default=1, help='Stacked LSTM Layer num.')
+        '--stacked_num', type=int, default=2, help='Stacked LSTM Layer num.')
     parser.add_argument(
         '--emb_dim', type=int, default=32, help='The embedding dim.')
     parser.add_argument(
@@ -63,10 +63,11 @@ def lstm_model(data, dict_dim, class_dim=2):
     emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, args.emb_dim])
     emb = fluid.layers.transpose(x=emb, axis=[1, 0, 2])
 
-    c_pre_init = fluid.layers.fill_constant(
-        dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
     layer_1_out = emb
     for i in range(stacked_num):
+        c_pre_init = fluid.layers.fill_constant(
+            dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
+        c_pre_init.stop_gradient = False
         layer_1_out = fluid.layers.lstm(
             layer_1_out, c_pre_init=c_pre_init, hidden_dim=emb_dim)
 
