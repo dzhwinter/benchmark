@@ -94,8 +94,8 @@ def to_lodtensor(data, place):
     return res
 
 
-def chop_data(data, chop_len=80, batch_size=50):
-    data = [(x[0][:chop_len], x[1]) for x in data if len(x[0]) >= chop_len]
+def chop_data(data, chop_len, batch_size):
+    data = [(list(x[0] + [0] * chop_len)[:chop_len], x[1]) for x in data]
 
     return data[:batch_size]
 
@@ -142,7 +142,7 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.imdb.train(word_dict),
-            buf_size=25000),  # only set imdb for speed
+            buf_size=args.batch_size * 10),  # only set imdb for speed
         batch_size=args.batch_size)
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
