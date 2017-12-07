@@ -14,7 +14,7 @@ import paddle.v2.fluid.profiler as profiler
 def parse_args():
     parser = argparse.ArgumentParser("LSTM model benchmark.")
     parser.add_argument(
-        '--batch_size', type=int, default=50, help='The minibatch size.')
+        '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
         '--stacked_num', type=int, default=2, help='Stacked LSTM Layer num.')
     parser.add_argument(
@@ -142,7 +142,7 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.imdb.train(word_dict),
-            buf_size=args.batch_size * 10),  # only set imdb for speed
+            buf_size=25000),  # only for speed
         batch_size=args.batch_size)
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
