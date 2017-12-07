@@ -55,7 +55,8 @@ accuracy = evaluator.Accuracy(input=predict, label=label)
 
 train_reader = paddle.batch(paddle.dataset.mnist.train(), batch_size=BATCH_SIZE)
 
-place = core.CPUPlace()
+# place = core.CPUPlace()
+place = core.GPUPlace(0)
 exe = Executor(place)
 
 exe.run(framework.default_startup_program())

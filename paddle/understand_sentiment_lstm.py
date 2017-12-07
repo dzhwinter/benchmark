@@ -14,7 +14,7 @@ import paddle.v2.fluid.profiler as profiler
 def parse_args():
     parser = argparse.ArgumentParser("LSTM model benchmark.")
     parser.add_argument(
-        '--batch_size', type=int, default=32, help='The minibatch size.')
+        '--batch_size', type=int, default=50, help='The minibatch size.')
     parser.add_argument(
         '--stacked_num', type=int, default=2, help='Stacked LSTM Layer num.')
     parser.add_argument(
@@ -60,7 +60,7 @@ def lstm_model(data, dict_dim, class_dim=2):
     stacked_num = args.stacked_num
 
     emb = fluid.layers.embedding(input=data, size=[dict_dim, emb_dim])
-    emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, args.emb_dim])
+    emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, emb_dim])
     emb = fluid.layers.transpose(x=emb, axis=[1, 0, 2])
 
     layer_1_out = emb
@@ -125,7 +125,8 @@ def run_benchmark(model, args):
         name="words",
         shape=[args.seq_len * args.batch_size, 1],
         append_batch_size=False,
-        dtype="int64")
+        dtype="int64",
+        lod_level=1)
     label = fluid.layers.data(
         name="label",
         shape=[args.batch_size, 1],
@@ -151,7 +152,8 @@ def run_benchmark(model, args):
         if iter == args.iterations:
             break
         for data in train_reader():
-            chopped_data = chop_data(data)
+            chopped_data = chop_data(
+                data, chop_len=args.seq_len, batch_size=args.batch_size)
             tensor_words, tensor_label = prepare_feed_data(chopped_data, place)
 
             loss, acc = exe.run(
