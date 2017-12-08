@@ -104,6 +104,21 @@ g_accuracy = tf.metrics.accuracy(labels, tf.argmax(prediction, axis=1))
 optimizer = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
 train_op = optimizer.minimize(avg_cost)
 
+
+def eval_test():
+    test_reader = paddle.batch(
+        paddle.dataset.mnist.test(), batch_size=BATCH_SIZE)
+    for batch_id, data in enumerate(test_reader()):
+        images_data = np.array(
+            map(lambda x: np.transpose(x[0].reshape([1, 28, 28]), axes=[1,2,0]), data)).astype("float32")
+        labels_data = np.array(map(lambda x: x[1], data)).astype("int64")
+        _, loss, acc, g_acc = sess.run(
+            [train_op, avg_cost, accuracy, g_accuracy],
+            feed_dict={images: images_data,
+                       labels: labels_data})
+    return g_acc[1]
+
+
 config = tf.ConfigProto(
     intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
 with tf.Session(config=config) as sess:
@@ -111,8 +126,8 @@ with tf.Session(config=config) as sess:
     init_l = tf.local_variables_initializer()
     sess.run(init_g)
     sess.run(init_l)
-    pass_start = time.clock()
     for pass_id in range(PASS_NUM):
+        pass_start = time.clock()
         for batch_id, data in enumerate(train_reader()):
             images_data = np.array(
                 map(lambda x: np.transpose(x[0].reshape([1, 28, 28]), axes=[1,2,0]), data)).astype("float32")
@@ -123,9 +138,10 @@ with tf.Session(config=config) as sess:
                 feed_dict={images: images_data,
                            labels: labels_data})
             end = time.clock()
-            # print g_acc
 
             print "pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" % (
                 pass_id, batch_id, loss, 1 - acc, (end - start) / 1000)
-        print "pass=%d, accuracy=%f, elapse=%f" % (pass_id, g_acc[0], (
-            time.clock() - pass_start) / 1000)
+        pass_end = time.clock()
+        test_avg_acc = eval_test()
+        print "pass=%d, training_avg_accuracy=%f, test_avg_acc=%f, elapse=%f" % \
+                (pass_id, g_acc[1], test_avg_acc, (pass_end - pass_start) / 1000)
