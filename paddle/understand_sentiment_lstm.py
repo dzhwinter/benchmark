@@ -60,7 +60,7 @@ def lstm_model(data, dict_dim, class_dim=2):
     stacked_num = args.stacked_num
 
     emb = fluid.layers.embedding(input=data, size=[dict_dim, emb_dim])
-    emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, args.emb_dim])
+    emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, emb_dim])
     emb = fluid.layers.transpose(x=emb, axis=[1, 0, 2])
 
     layer_1_out = emb
@@ -94,8 +94,8 @@ def to_lodtensor(data, place):
     return res
 
 
-def chop_data(data, chop_len=80, batch_size=50):
-    data = [(x[0][:chop_len], x[1]) for x in data if len(x[0]) >= chop_len]
+def chop_data(data, chop_len, batch_size):
+    data = [(list(x[0] + [0] * chop_len)[:chop_len], x[1]) for x in data]
 
     return data[:batch_size]
 
@@ -125,7 +125,8 @@ def run_benchmark(model, args):
         name="words",
         shape=[args.seq_len * args.batch_size, 1],
         append_batch_size=False,
-        dtype="int64")
+        dtype="int64",
+        lod_level=1)
     label = fluid.layers.data(
         name="label",
         shape=[args.batch_size, 1],
@@ -141,7 +142,7 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.imdb.train(word_dict),
-            buf_size=25000),  # only set imdb for speed
+            buf_size=25000),  # only for speed
         batch_size=args.batch_size)
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
@@ -151,7 +152,8 @@ def run_benchmark(model, args):
         if iter == args.iterations:
             break
         for data in train_reader():
-            chopped_data = chop_data(data)
+            chopped_data = chop_data(
+                data, chop_len=args.seq_len, batch_size=args.batch_size)
             tensor_words, tensor_label = prepare_feed_data(chopped_data, place)
 
             loss, acc = exe.run(
