@@ -60,6 +60,31 @@ exe = Executor(place)
 
 exe.run(framework.default_startup_program())
 
+
+def eval_test():
+    test_reader = paddle.batch(
+        paddle.dataset.mnist.test(), batch_size=BATCH_SIZE)
+    accuracy.reset(exe)
+    for batch_id, data in enumerate(test_reader()):
+        img_data = np.array(map(lambda x: x[0].reshape([1, 28, 28]),
+                                data)).astype(DTYPE)
+        y_data = np.array(map(lambda x: x[1], data)).astype("int64")
+        y_data = y_data.reshape([len(y_data), 1])
+
+        tensor_img = core.LoDTensor()
+        tensor_y = core.LoDTensor()
+        tensor_img.set(img_data, place)
+        tensor_y.set(y_data, place)
+
+        exe.run(framework.default_main_program(),
+                feed={"pixel": tensor_img,
+                      "label": tensor_y},
+                fetch_list=[avg_cost] + accuracy.metrics)
+
+    pass_acc = accuracy.eval(exe)
+    return pass_acc
+
+
 for pass_id in range(PASS_NUM):
     accuracy.reset(exe)
     pass_start = time.clock()
@@ -86,6 +111,8 @@ for pass_id in range(PASS_NUM):
             pass_id, batch_id, loss, 1 - acc, (end - start) / 1000)
 
     pass_acc = accuracy.eval(exe)
-    print "pass=%d, accuracy=%f, elapse=%f" % (pass_id, pass_acc, (
-        time.clock() - pass_start) / 1000)
+    pass_end = time.clock()
+    test_avg_acc = eval_test()
+    print "pass=%d, training_avg_acc=%f, test_avg_acc=%f, elapse=%f" % (
+        pass_id, pass_acc, test_avg_acc, (pass_end - pass_start) / 1000)
 exit(1)
