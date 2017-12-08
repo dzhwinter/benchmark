@@ -71,8 +71,6 @@ def eval_test():
         y_data = np.array(map(lambda x: x[1], data)).astype("int64")
         y_data = y_data.reshape([len(y_data), 1])
 
-        tensor_img = core.LoDTensor()
-        tensor_y = core.LoDTensor()
         tensor_img.set(img_data, place)
         tensor_y.set(y_data, place)
 
@@ -94,8 +92,6 @@ for pass_id in range(PASS_NUM):
         y_data = np.array(map(lambda x: x[1], data)).astype("int64")
         y_data = y_data.reshape([len(y_data), 1])
 
-        tensor_img = core.LoDTensor()
-        tensor_y = core.LoDTensor()
         tensor_img.set(img_data, place)
         tensor_y.set(y_data, place)
 
