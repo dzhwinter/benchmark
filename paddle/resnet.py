@@ -6,6 +6,7 @@ import argparse
 import functools
 import numpy as np
 import time
+import distutils.util
 
 import cProfile, pstats, StringIO
 
@@ -24,6 +25,17 @@ def parse_args():
         help='The model architecture.')
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
+    parser.add_argument(
+        '--use_real_data',
+        type=distutils.util.strtobool,
+        default=True,
+        help='use real data or fake data')
+    parser.add_argument(
+        '--skip_batch_num',
+        type=int,
+        default=5,
+        help='The first num of minibatch num to skip, for better performance test'
+    )
     parser.add_argument(
         '--iterations', type=int, default=80, help='The number of minibatches.')
     parser.add_argument(
@@ -148,19 +160,29 @@ def run_benchmark(model, args):
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
+    if not args.use_real_data:
+        data = train_reader().next()
+        image = np.array(map(lambda x: x[0].reshape(dshape), data)).astype(
+            'float32')
+        label = np.array(map(lambda x: x[1], data)).astype('int64')
+        label = label.reshape([-1, 1])
+
     iter = 0
     im_num = 0
     for pass_id in range(args.pass_num):
         accuracy.reset(exe)
         if iter == args.iterations:
             break
-        for data in train_reader():
+        for batch_id, data in enumerate(train_reader()):
+            if iter == args.skip_batch_num:
+                start_time = time.time()
             if iter == args.iterations:
                 break
-            image = np.array(map(lambda x: x[0].reshape(dshape), data)).astype(
-                'float32')
-            label = np.array(map(lambda x: x[1], data)).astype('int64')
-            label = label.reshape([-1, 1])
+            if args.use_real_data:
+                image = np.array(map(lambda x: x[0].reshape(dshape),
+                                     data)).astype('float32')
+                label = np.array(map(lambda x: x[1], data)).astype('int64')
+                label = label.reshape([-1, 1])
             loss, acc = exe.run(fluid.default_main_program(),
                                 feed={'data': image,
                                       'label': label},
@@ -172,8 +194,9 @@ def run_benchmark(model, args):
             im_num += label.shape[0]
 
     duration = time.time() - start_time
+    im_num = im_num - args.skip_batch_num * args.batch_size
     examples_per_sec = im_num / duration
-    sec_per_batch = duration / iter
+    sec_per_batch = duration / (iter - args.skip_batch_num)
 
     print('\nTotal examples: %d, total time: %.5f' % (im_num, duration))
     print('%.5f examples/sec, %.5f sec/batch \n' %

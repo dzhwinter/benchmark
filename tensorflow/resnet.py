@@ -7,6 +7,7 @@ from __future__ import division
 from __future__ import print_function
 
 import argparse
+import distutils.util
 
 import time
 import numpy as np
@@ -27,7 +28,18 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
-        '--iterations', type=int, default=35, help='The number of minibatches.')
+        '--use_real_data',
+        type=distutils.util.strtobool,
+        default=True,
+        help='use real data or fake data')
+    parser.add_argument(
+        '--skip_batch_num',
+        type=int,
+        default=5,
+        help='The first num of minibatch num to skip, for better performance test'
+    )
+    parser.add_argument(
+        '--iterations', type=int, default=80, help='The number of minibatches.')
     parser.add_argument(
         '--pass_num', type=int, default=100, help='The number of passes.')
     parser.add_argument(
@@ -392,7 +404,6 @@ def resnet(depth, class_dim, data_format):
 
 def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
     """Our model_fn for ResNet to be used with our Estimator."""
-    start_time = time.time()
 
     class_dim = 102
     dshape = (None, 224, 224, 3)
@@ -431,17 +442,25 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
         sess.run(init_g)
         sess.run(init_l)
 
+        if not args.use_real_data:
+            data = train_reader().next()
+            images_data = np.array(
+                    map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
+            labels_data = np.array(map(lambda x: x[1], data)).astype('int64')
         iter = 0
         for pass_id in range(args.pass_num):
             if iter == args.iterations:
                 break
             for batch_id, data in enumerate(train_reader()):
+                if iter == args.skip_batch_num:
+                    start_time = time.time()
                 if iter == args.iterations:
                     break
-                images_data = np.array(
-                    map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
-                labels_data = np.array(map(lambda x: x[1], data)).astype(
-                    'int64')
+                if args.use_real_data:
+                    images_data = np.array(
+                        map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
+                    labels_data = np.array(map(lambda x: x[1], data)).astype(
+                        'int64')
                 _, loss, acc, g_acc = sess.run(
                     [train_op, avg_cost, accuracy, g_accuracy],
                     feed_dict={images: images_data,
@@ -451,12 +470,12 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                 iter += 1
 
         duration = time.time() - start_time
-        examples_per_sec = args.iterations * args.batch_size / duration
-        sec_per_batch = duration / args.batch_size
+        img_num = (iter - args.skip_batch_num) * args.batch_size
+        examples_per_sec = img_num / duration
+        sec_per_batch = duration / (iter - args.skip_batch_num)
 
-        print('\nTotal examples: %d, total time: %.5f' %
-              (iter * args.batch_size, duration))
-        print('%.5f examples/sec, %.5f sec/batch \n' %
+        print('Total examples: %d, total time: %.5f' % (img_num, duration))
+        print('%.5f examples/sec, %.5f sec/batch' %
               (examples_per_sec, sec_per_batch))
 
 
