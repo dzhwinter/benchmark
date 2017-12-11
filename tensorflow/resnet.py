@@ -28,9 +28,8 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
-        '--use_real_data',
-        type=distutils.util.strtobool,
-        default=True,
+        '--use_fake_data',
+        action='store_true',
         help='use real data or fake data')
     parser.add_argument(
         '--skip_batch_num',
@@ -442,7 +441,7 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
         sess.run(init_g)
         sess.run(init_l)
 
-        if not args.use_real_data:
+        if args.use_fake_data:
             data = train_reader().next()
             images_data = np.array(
                     map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
@@ -456,7 +455,7 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                     start_time = time.time()
                 if iter == args.iterations:
                     break
-                if args.use_real_data:
+                if not args.use_fake_data:
                     images_data = np.array(
                         map(lambda x: np.transpose(x[0].reshape([3, 224, 224]), axes=[1, 2, 0]), data)).astype("float32")
                     labels_data = np.array(map(lambda x: x[1], data)).astype(

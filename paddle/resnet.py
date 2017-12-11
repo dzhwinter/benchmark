@@ -26,9 +26,8 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
-        '--use_real_data',
-        type=distutils.util.strtobool,
-        default=True,
+        '--use_fake_data',
+        action='store_true',
         help='use real data or fake data')
     parser.add_argument(
         '--skip_batch_num',
@@ -160,7 +159,7 @@ def run_benchmark(model, args):
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
-    if not args.use_real_data:
+    if args.use_fake_data:
         data = train_reader().next()
         image = np.array(map(lambda x: x[0].reshape(dshape), data)).astype(
             'float32')
@@ -178,7 +177,7 @@ def run_benchmark(model, args):
                 start_time = time.time()
             if iter == args.iterations:
                 break
-            if args.use_real_data:
+            if not args.use_fake_data:
                 image = np.array(map(lambda x: x[0].reshape(dshape),
                                      data)).astype('float32')
                 label = np.array(map(lambda x: x[1], data)).astype('int64')
