@@ -6,7 +6,6 @@ import argparse
 import functools
 import numpy as np
 import time
-import distutils.util
 
 import cProfile, pstats, StringIO
 

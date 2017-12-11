@@ -7,7 +7,6 @@ from __future__ import division
 from __future__ import print_function
 
 import argparse
-import distutils.util
 
 import time
 import numpy as np
