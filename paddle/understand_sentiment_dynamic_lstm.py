@@ -128,7 +128,7 @@ def run_benchmark(model, args):
             tensor_words = to_lodtensor(map(lambda x: x[0], data), place)
 
             label = np.array(map(lambda x: x[1], data)).astype("int64")
-            label = label.reshape([args.batch_size, 1])
+            label = label.reshape([len(data), 1])
 
             tensor_label = fluid.LoDTensor()
             tensor_label.set(label, place)
