@@ -71,12 +71,9 @@ def eval_test():
         y_data = np.array(map(lambda x: x[1], data)).astype("int64")
         y_data = y_data.reshape([len(y_data), 1])
 
-        tensor_img.set(img_data, place)
-        tensor_y.set(y_data, place)
-
         exe.run(framework.default_main_program(),
-                feed={"pixel": tensor_img,
-                      "label": tensor_y},
+                feed={"pixel": img_data,
+                      "label": y_data},
                 fetch_list=[avg_cost] + accuracy.metrics)
 
     pass_acc = accuracy.eval(exe)
@@ -92,13 +89,10 @@ for pass_id in range(PASS_NUM):
         y_data = np.array(map(lambda x: x[1], data)).astype("int64")
         y_data = y_data.reshape([len(y_data), 1])
 
-        tensor_img.set(img_data, place)
-        tensor_y.set(y_data, place)
-
         start = time.clock()
         outs = exe.run(framework.default_main_program(),
-                       feed={"pixel": tensor_img,
-                             "label": tensor_y},
+                       feed={"pixel": img_data,
+                             "label": y_data},
                        fetch_list=[avg_cost] + accuracy.metrics)
         end = time.clock()
         loss = np.array(outs[0])
