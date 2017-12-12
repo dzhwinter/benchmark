@@ -121,10 +121,9 @@ def run_benchmark(model, args):
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
-    for it, pass_id in enumerate(xrange(args.pass_num)):
+    iterator = 0
+    for pass_id in xrange(args.pass_num):
         accuracy.reset(exe)
-        if iter == args.iterations:
-            break
         for data in train_reader():
             tensor_words = to_lodtensor(map(lambda x: x[0], data), place)
 
@@ -140,8 +139,13 @@ def run_benchmark(model, args):
                       "label": tensor_label},
                 fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
-            print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (it, str(loss), str(acc), str(pass_acc)))
+
+            iterator += 1
+            print("pass_id:%d, Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
+                  (pass_id, iterator, str(loss), str(acc), str(pass_acc)))
+
+            if iterator == args.iterations:
+                return
 
 
 if __name__ == '__main__':

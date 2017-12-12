@@ -168,9 +168,10 @@ def run_benchmark(model, args):
     iter = 0
     im_num = 0
     for pass_id in range(args.pass_num):
-        accuracy.reset(exe)
         if iter == args.iterations:
             break
+        accuracy.reset(exe)
+
         for batch_id, data in enumerate(train_reader()):
             if iter == args.skip_batch_num:
                 start_time = time.time()
