@@ -7,9 +7,9 @@ from __future__ import division
 from __future__ import print_function
 
 import argparse
-
 import time
 import numpy as np
+
 import paddle.v2 as paddle
 import tensorflow as tf
 

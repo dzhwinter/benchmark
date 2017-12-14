@@ -1,12 +1,14 @@
-import tensorflow.python.platform
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import argparse
+import time
+import numpy as np
+
 import tensorflow as tf
 import paddle.v2 as paddle
-import paddle.v2.fluid.framework as framework
-import paddle.v2.fluid.initializer as initializer
-import paddle.v2.fluid.core as core
-from paddle.v2.fluid.executor import Executor
-import numpy as np
-import time
+import paddle.v2.fluid as fluid
 
 BATCH_SIZE = 128
 PASS_NUM = 5
@@ -22,17 +24,17 @@ def normal_scale(size, channels):
 # NOTE(dzhwinter) : tensorflow use Phliox random algorithm
 # as normal generator, fetch out paddle random for comparization
 def paddle_random_normal(shape, loc=.0, scale=1., seed=1, dtype="float32"):
-    program = framework.Program()
+    program = fluid.framework.Program()
     block = program.global_block()
     w = block.create_var(
         dtype="float32",
         shape=shape,
         lod_level=0,
         name="param",
-        initializer=initializer.NormalInitializer(
+        initializer=fluid.initializer.NormalInitializer(
             loc=.0, scale=scale, seed=seed))
-    place = core.CPUPlace()
-    exe = Executor(place)
+    place = fluid.CPUPlace()
+    exe = fluid.Executor(place)
     out = exe.run(program, fetch_list=[w])
     return np.array(out[0])
 
@@ -101,8 +103,8 @@ correct = tf.equal(tf.argmax(prediction, 1), labels)
 accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
 g_accuracy = tf.metrics.accuracy(labels, tf.argmax(prediction, axis=1))
 
-optimizer = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
-train_op = optimizer.minimize(avg_cost)
+opt = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
+train_op = opt.minimize(avg_cost)
 
 
 def eval_test():
@@ -139,9 +141,9 @@ with tf.Session(config=config) as sess:
                            labels: labels_data})
             end = time.clock()
 
-            print "pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" % (
-                pass_id, batch_id, loss, 1 - acc, (end - start) / 1000)
+            print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
+                  (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
         pass_end = time.clock()
         test_avg_acc = eval_test()
-        print "pass=%d, training_avg_accuracy=%f, test_avg_acc=%f, elapse=%f" % \
-                (pass_id, g_acc[1], test_avg_acc, (pass_end - pass_start) / 1000)
+        print("pass=%d, training_avg_accuracy=%f, test_avg_acc=%f, elapse=%f" %
+              (pass_id, g_acc[1], test_avg_acc, (pass_end - pass_start) / 1000))

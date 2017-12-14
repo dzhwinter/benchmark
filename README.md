@@ -17,7 +17,7 @@ TensorFlow: 1.4.0
 
 ## Benchmark Model
 
-### PaddlePaddle Fluid vs TensorFlow selected models
+### selected models PaddlePaddle Fluid vs TensorFlow 
 We selected some classic models, compare the performance and speed with TensorFlow. 
 
 |              | train cost | train accuracy | test accuracy | samples/sec | train cost | train accuracy | test accuracy | samples/sec |
@@ -49,7 +49,8 @@ add charts compare here
 | TensorFlow| | | |
 
 - TBD
-add charts compare here
+
+add charts here
 
 - Stacked LSTM
 
@@ -59,10 +60,11 @@ add charts compare here
 | TensorFlow| | | |
 
 - TBD
-add charts compare here
+
+add charts here
 
 
-### PaddlePaddle Fluid vs Paddle 0.10.0 books
+### PaddlePaddle books Fluid vs Paddle 0.10.0 
 To validate the Fluid performance on general models, we choose the models in book chapter, compare the performance and speed with Paddle 0.10.0.
 
 |                         | train cost | train accuracy | test accuracy | samples/sec | train cost | train accuracy | test accuracy | samples/sec |

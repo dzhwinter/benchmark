@@ -149,9 +149,9 @@ def run_benchmark(model, args):
     exe.run(fluid.default_startup_program())
     for it, pass_id in enumerate(xrange(args.pass_num)):
         accuracy.reset(exe)
-        if iter == args.iterations:
+        if it == args.iterations:
             break
-        for data in train_reader():
+        for batch_id, data in enumerate(train_reader()):
             chopped_data = chop_data(
                 data, chop_len=args.seq_len, batch_size=args.batch_size)
             tensor_words, tensor_label = prepare_feed_data(chopped_data, place)
@@ -162,8 +162,8 @@ def run_benchmark(model, args):
                       "label": tensor_label},
                 fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
-            print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (it, str(loss), str(acc), str(pass_acc)))
+            print("pass=%d, batch=%d, loss=%f, acc=%f, pass_acc=%f" %
+                  (it, batch_id, loss, acc, pass_acc))
 
 
 if __name__ == '__main__':
