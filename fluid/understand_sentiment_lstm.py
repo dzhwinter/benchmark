@@ -47,6 +47,7 @@ def parse_args():
 
 
 def print_arguments(args):
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and vars(args)['device']=='GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
