@@ -79,7 +79,7 @@ def cnn_model(data):
     return predict
 
 
-def eval_test():
+def eval_test(exe, accuracy, avg_cost):
     test_reader = paddle.batch(
         paddle.dataset.mnist.test(), batch_size=args.batch_size)
     accuracy.reset(exe)
@@ -143,10 +143,10 @@ def run_benchmark(model, args):
             print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
-        pass_acc = accuracy.eval(exe)
         pass_end = time.clock()
-        test_avg_acc = eval_test()
-        print("pass=%d, training_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
+        test_avg_acc = eval_test(exe, accuracy, avg_cost)
+        pass_acc = accuracy.eval(exe)
+        print("pass=%d, test_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
               (pass_id, pass_acc, test_avg_acc, (pass_end - pass_start) / 1000))
 
 
