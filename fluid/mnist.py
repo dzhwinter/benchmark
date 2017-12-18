@@ -12,7 +12,8 @@ import paddle.v2.fluid.profiler as profiler
 
 SEED = 1
 DTYPE = "float32"
-
+# random seed must set before configuring the network.
+fluid.default_startup_program().random_seed = SEED
 
 def parse_args():
     parser = argparse.ArgumentParser("mnist model benchmark.")
@@ -75,7 +76,7 @@ def cnn_model(data):
         act="softmax",
         param_attr=fluid.param_attr.ParamAttr(
             initializer=fluid.initializer.NormalInitializer(
-                loc=0.0, scale=scale, seed=SEED)))
+                loc=0.0, scale=scale)))
     return predict
 
 
