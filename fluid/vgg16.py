@@ -1,4 +1,4 @@
-"""VGG16 benchmark"""
+"""VGG16 benchmark in Fluid"""
 from __future__ import print_function
 
 import sys
