@@ -14,20 +14,19 @@ import numpy as np
 import argparse
 import time
 
-DTYPE = tf.float32
 parser = argparse.ArgumentParser("VGG16 benchmark.")
 parser.add_argument(
-    '--batch_size', type=int, default=32, help="Batch size for training.")
+    '--batch_size', type=int, default=128, help="Batch size for training.")
 parser.add_argument(
     '--learning_rate',
     type=float,
     default=1e-3,
     help="Learning rate for training.")
-parser.add_argument('--num_passes', type=int, default=10, help="No. of passes.")
+parser.add_argument('--num_passes', type=int, default=50, help="No. of passes.")
 parser.add_argument(
     '--device',
     type=str,
-    default='CPU',
+    default='GPU',
     choices=['CPU', 'GPU'],
     help="The device type.")
 parser.add_argument(
@@ -35,40 +34,55 @@ parser.add_argument(
     type=str,
     default='NHWC',
     choices=['NCHW', 'NHWC'],
-    help='The data order, now only support NCHW.')
-parser.add_argument(
-    '--num_skip_batch',
-    type=int,
-    default=0,
-    help='The first #num_skip_batch batches'
-    'will be skipped for timing.')
-parser.add_argument(
-    '--iterations', type=int, default=0, help='Maximum iterations')
+    help='The data order, NCHW=[batch, channels, height, width].')
 args = parser.parse_args()
 
 
 class VGG16Model(object):
-    def infer(self, imgs, weights=None, sess=None):
-        self.probs = tf.nn.softmax(self.network(imgs))
-        if weights is not None and sess is not None:
-            self.load_weights(weights, sess)
-        #TODO(add output here)
+    def __init__(self):
+        self.parameters = []
 
-    def conv_layer(self, name, images, kernel_shape):
+    def batch_norm_relu(self, inputs, is_training):
+        """Performs a batch normalization followed by a ReLU."""
+        # We set fused=True for a significant performance boost. See
+        # https://www.tensorflow.org/performance/performance_guide#common_fused_ops
+        inputs = tf.layers.batch_normalization(
+            inputs=inputs,
+            axis=1 if args.data_format == 'NCHW' else -1,
+            momentum=0.9,
+            epsilon=1e-05,
+            center=True,
+            scale=True,
+            training=is_training,
+            fused=True)
+        inputs = tf.nn.relu(inputs)
+        return inputs
+
+    def conv_bn_layer(self,
+                      name,
+                      images,
+                      kernel_shape,
+                      is_training,
+                      drop_rate=0.0):
         with tf.name_scope(name) as scope:
             kernel = tf.Variable(
                 tf.truncated_normal(
                     kernel_shape, dtype=tf.float32, stddev=1e-1),
                 name='weights')
-            conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
+            conv = tf.nn.conv2d(
+                images,
+                kernel, [1, 1, 1, 1],
+                data_format=args.data_format,
+                padding='SAME')
             biases = tf.Variable(
                 tf.constant(
                     0.0, shape=[kernel_shape[-1]], dtype=tf.float32),
                 trainable=True,
                 name='biases')
             out = tf.nn.bias_add(conv, biases)
-            out = tf.nn.relu(out, name=scope)
-            self.parameters += [kernel, biases]
+            out = self.batch_norm_relu(out, is_training)
+            out = tf.layers.dropout(out, rate=drop_rate, training=is_training)
+            #self.parameters += [kernel, biases]
             return out
 
     def fc_layer(self, name, inputs, shape):
@@ -82,94 +96,89 @@ class VGG16Model(object):
                     0.0, shape=[shape[-1]], dtype=tf.float32),
                 trainable=True,
                 name='biases')
-            fc_l = tf.nn.bias_add(tf.matmul(inputs, fc_w), fc_b)
-            out = tf.nn.relu(fc_l)
-            self.parameters += [fc_w, fc_b]
-            return fc_l, out
+            out = tf.nn.bias_add(tf.matmul(inputs, fc_w), fc_b)
+            #self.parameters += [fc_w, fc_b]
+            return out
 
-    def network(self, images, mode="training"):
-        self.parameters = []
-
-        # conv1_1
-        self.conv1_1 = self.conv_layer('conv1_1', images, [3, 3, 3, 64])
-        # conv1_2
-        self.conv1_2 = self.conv_layer('conv1_2', self.conv1_1, [3, 3, 64, 64])
+    def network(self, images, class_dim, is_training):
+        # conv1
+        conv1_1 = self.conv_bn_layer(
+            'conv1_1', images, [3, 3, 3, 64], is_training, drop_rate=0.3)
+        conv1_2 = self.conv_bn_layer(
+            'conv1_2', conv1_1, [3, 3, 64, 64], is_training, drop_rate=0.0)
         # pool1
-        self.pool1 = tf.nn.max_pool(
-            self.conv1_2,
+        pool1 = tf.nn.max_pool(
+            conv1_2,
             ksize=[1, 2, 2, 1],
             strides=[1, 2, 2, 1],
             padding='SAME',
             name='pool1')
-        # conv2_1
-        self.conv2_1 = self.conv_layer('conv2_1', self.pool1, [3, 3, 64, 128])
-        # conv2_2
-        self.conv2_2 = self.conv_layer('conv2_2', self.conv2_1,
-                                       [3, 3, 128, 128])
+        # conv2
+        conv2_1 = self.conv_bn_layer(
+            'conv2_1', pool1, [3, 3, 64, 128], is_training, drop_rate=0.4)
+        conv2_2 = self.conv_bn_layer(
+            'conv2_2', conv2_1, [3, 3, 128, 128], is_training, drop_rate=0.0)
         # pool2
-        self.pool2 = tf.nn.max_pool(
-            self.conv2_2,
+        pool2 = tf.nn.max_pool(
+            conv2_2,
             ksize=[1, 2, 2, 1],
             strides=[1, 2, 2, 1],
             padding='SAME',
             name='pool2')
-        # conv3_1
-        self.conv3_1 = self.conv_layer('conv3_1', self.pool2, [3, 3, 128, 256])
-        # conv3_2
-        self.conv3_2 = self.conv_layer('conv3_2', self.conv3_1,
-                                       [3, 3, 256, 256])
-        # conv3_3
-        self.conv3_3 = self.conv_layer('conv3_3', self.conv3_2,
-                                       [3, 3, 256, 256])
+        # conv3
+        conv3_1 = self.conv_bn_layer(
+            'conv3_1', pool2, [3, 3, 128, 256], is_training, drop_rate=0.4)
+        conv3_2 = self.conv_bn_layer(
+            'conv3_2', conv3_1, [3, 3, 256, 256], is_training, drop_rate=0.4)
+        conv3_3 = self.conv_bn_layer(
+            'conv3_3', conv3_2, [3, 3, 256, 256], is_training, drop_rate=0.0)
         # pool3
-        self.pool3 = tf.nn.max_pool(
-            self.conv3_3,
+        pool3 = tf.nn.max_pool(
+            conv3_3,
             ksize=[1, 2, 2, 1],
             strides=[1, 2, 2, 1],
             padding='SAME',
             name='pool3')
-        # conv4_1
-        self.conv4_1 = self.conv_layer('conv4_1', self.pool3, [3, 3, 256, 512])
-        # conv4_2
-        self.conv4_2 = self.conv_layer('conv4_2', self.conv4_1,
-                                       [3, 3, 512, 512])
-        # conv4_3
-        self.conv4_3 = self.conv_layer('conv4_3', self.conv4_2,
-                                       [3, 3, 512, 512])
+        # conv4
+        conv4_1 = self.conv_bn_layer(
+            'conv4_1', pool3, [3, 3, 256, 512], is_training, drop_rate=0.4)
+        conv4_2 = self.conv_bn_layer(
+            'conv4_2', conv4_1, [3, 3, 512, 512], is_training, drop_rate=0.4)
+        conv4_3 = self.conv_bn_layer(
+            'conv4_3', conv4_2, [3, 3, 512, 512], is_training, drop_rate=0.0)
         # pool4
-        self.pool4 = tf.nn.max_pool(
-            self.conv4_3,
+        pool4 = tf.nn.max_pool(
+            conv4_3,
             ksize=[1, 2, 2, 1],
             strides=[1, 2, 2, 1],
             padding='SAME',
             name='pool4')
-        # conv5_1
-        self.conv5_1 = self.conv_layer('conv5_1', self.pool4, [3, 3, 512, 512])
-        # conv5_2
-        self.conv5_2 = self.conv_layer('conv5_2', self.conv5_1,
-                                       [3, 3, 512, 512])
-        # conv5_3
-        self.conv5_3 = self.conv_layer('conv5_3', self.conv5_2,
-                                       [3, 3, 512, 512])
+        # conv5
+        conv5_1 = self.conv_bn_layer(
+            'conv5_1', pool4, [3, 3, 512, 512], is_training, drop_rate=0.4)
+        conv5_2 = self.conv_bn_layer(
+            'conv5_2', conv5_1, [3, 3, 512, 512], is_training, drop_rate=0.4)
+        conv5_3 = self.conv_bn_layer(
+            'conv5_3', conv5_2, [3, 3, 512, 512], is_training, drop_rate=0.0)
         # pool5
-        self.pool5 = tf.nn.max_pool(
-            self.conv5_3,
+        pool5 = tf.nn.max_pool(
+            conv5_3,
             ksize=[1, 2, 2, 1],
             strides=[1, 2, 2, 1],
             padding='SAME',
             name='pool4')
         # flatten
-        shape = int(np.prod(self.pool5.get_shape()[1:]))
-        pool5_flat = tf.reshape(self.pool5, [-1, shape])
+        shape = int(np.prod(pool5.get_shape()[1:]))
+        pool5_flat = tf.reshape(pool5, [-1, shape])
         # fc1
-        _, self.fc1 = self.fc_layer('fc1', pool5_flat, [shape, 512])
+        drop = tf.layers.dropout(pool5_flat, rate=0.5, training=is_training)
+        fc1 = self.fc_layer('fc1', drop, [shape, 512])
         # fc2
-        _, self.fc2 = self.fc_layer('fc2', self.fc1, [512, 512])
-        # fc3
-        self.fc3l, _ = self.fc_layer('fc3', self.fc2, [512, 102])
+        bn = self.batch_norm_relu(fc1, is_training)
+        drop = tf.layers.dropout(bn, rate=0.5, training=is_training)
+        fc2 = self.fc_layer('fc2', drop, [512, class_dim])
 
-        return self.fc3l
-        #return tf.nn.softmax(self.fc3l)
+        return fc2
 
     def load_weights(self, weight_file, sess):
         weights = np.load(weight_file)
@@ -180,16 +189,18 @@ class VGG16Model(object):
 
 
 def run_benchmark():
-    class_dim = 102
-    dshape = (None, 224, 224, 3)
+    """Use cifar10."""
+    class_dim = 10
+    dshape = (None, 32, 32, 3)
     device = '/cpu:0' if args.device == 'CPU' else '/device:GPU:0'
     with tf.device(device):
-        images = tf.placeholder(DTYPE, shape=dshape)
+        images = tf.placeholder(tf.float32, shape=dshape)
         labels = tf.placeholder(tf.int64, shape=(None, ))
+        is_training = tf.placeholder('bool')
         onehot_labels = tf.one_hot(labels, depth=class_dim)
 
-        model = VGG16Model()
-        logits = model.network(images)
+        vgg16 = VGG16Model()
+        logits = vgg16.network(images, class_dim, is_training)
         loss = tf.losses.softmax_cross_entropy(
             onehot_labels=onehot_labels, logits=logits)
         avg_loss = tf.reduce_mean(loss)
@@ -199,46 +210,68 @@ def run_benchmark():
         g_accuracy = tf.metrics.accuracy(labels, tf.argmax(logits, axis=1))
 
         optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
-        train_op = optimizer.minimize(avg_loss)
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_op = optimizer.minimize(avg_loss)
 
     # data reader
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.flowers.train(), buf_size=5120),
+            paddle.dataset.cifar.train10(), buf_size=5120),
         batch_size=args.batch_size)
+    test_reader = paddle.batch(
+        paddle.reader.shuffle(
+            paddle.dataset.cifar.test10(), buf_size=5120),
+        batch_size=100)
 
     with tf.Session() as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
         sess.run(init_g)
         sess.run(init_l)
-        iters, num_samples = 0, 0
+        iters, num_samples, start_time = 0, 0, 0.0
         for pass_id in range(args.num_passes):
-            if args.iterations == iters:
-                break
+            # train
+            num_samples = 0
+            start_time = time.clock()
             for batch_id, data in enumerate(train_reader()):
-                if args.num_skip_batch == iters:
-                    start_time = time.clock()
+
                 train_images = np.array(
-                    map(lambda x: np.transpose(x[0].reshape([3, 224, 224]),
+                    map(lambda x: np.transpose(x[0].reshape([3, 32, 32]),
                     axes=[1, 2, 0]), data)).astype("float32")
                 train_labels = np.array(map(lambda x: x[1], data)).astype(
                     'int64')
                 _, loss, acc, g_acc = sess.run(
                     [train_op, avg_loss, accuracy, g_accuracy],
-                    feed_dict={images: train_images,
-                               labels: train_labels})
-                print("pass=%d, batch=%d, loss=%f, acc=%f" %
-                      (pass_id, batch_id, loss, acc))
+                    feed_dict={
+                        images: train_images,
+                        labels: train_labels,
+                        is_training: True
+                    })
                 iters += 1
-                if iters > args.num_skip_batch:
-                    num_samples += len(data)
-                if args.iterations == iters:
-                    break
+                print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
+                      (pass_id, iters, loss, acc))
+                num_samples += len(data)
+            train_elapsed = time.clock() - start_time
 
-        duration = time.clock() - start_time
-        imgs_per_sec = num_samples / duration
-        print("duration=%fs, performance=%fimgs/s" % (duration, imgs_per_sec))
+            # evaluation
+            test_accs = []
+            for batch_id, data in enumerate(test_reader()):
+                test_images = np.array(
+                    map(lambda x: np.transpose(x[0].reshape([3, 32, 32]),
+                    axes=[1, 2, 0]), data)).astype("float32")
+                test_labels = np.array(map(lambda x: x[1], data)).astype(
+                    'int64')
+                test_accs.append(
+                    accuracy.eval(feed_dict={
+                        images: test_images,
+                        labels: test_labels,
+                        is_training: False
+                    }))
+
+            print(
+                "Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n"
+                % (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
 
 
 def print_arguments():
