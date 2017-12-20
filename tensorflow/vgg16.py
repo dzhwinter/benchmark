@@ -25,7 +25,8 @@ parser.add_argument(
     type=str,
     default='NHWC',
     choices=['NCHW', 'NHWC'],
-    help='The data order, NCHW=[batch, channels, height, width].')
+    help='The data order, NCHW=[batch, channels, height, width].'
+    'Only support NHWC right now.')
 args = parser.parse_args()
 
 
@@ -167,9 +168,11 @@ class VGG16Model(object):
         # fc2
         bn = self.batch_norm_relu(fc1, is_training)
         drop = tf.layers.dropout(bn, rate=0.5, training=is_training)
-        fc2 = self.fc_layer('fc2', drop, [512, class_dim])
+        fc2 = self.fc_layer('fc2', drop, [512, 512])
 
-        return fc2
+        fc3 = self.fc_layer('fc3', fc2, [512, class_dim])
+
+        return fc3
 
     def load_weights(self, weight_file, sess):
         weights = np.load(weight_file)
@@ -182,7 +185,7 @@ class VGG16Model(object):
 def run_benchmark():
     """Use cifar10."""
     class_dim = 10
-    dshape = (None, 32, 32, 3)
+    dshape = (None, 32, 32, 3)  # (N, H, W, C)
     device = '/cpu:0' if args.device == 'CPU' else '/device:GPU:0'
     with tf.device(device):
         images = tf.placeholder(tf.float32, shape=dshape)

@@ -27,7 +27,7 @@ parser.add_argument(
 parser.add_argument(
     '--data_format',
     type=str,
-    default='NHWC',
+    default='NCHW',
     choices=['NCHW', 'NHWC'],
     help='The data order, now only support NCHW.')
 args = parser.parse_args()
@@ -56,26 +56,8 @@ def vgg16_bn_drop(input):
     fc1 = fluid.layers.fc(input=drop, size=512, act=None)
     bn = fluid.layers.batch_norm(input=fc1, act='relu')
     drop2 = fluid.layers.dropout(x=bn, dropout_prob=0.5)
-    fc2 = fluid.layers.fc(input=drop2, size=10, act=None)
+    fc2 = fluid.layers.fc(input=drop2, size=512, act=None)
     return fc2
-
-
-def eval_test(exe):
-    test_reader = paddle.batch(paddle.dataset.cifar.test10(), batch_size=100)
-    accuracy.reset(exe)
-    for batch_id, data in enumerate(test_reader()):
-        img_data = np.array(map(lambda x: x[0].reshape([3, 32, 32]),
-                                data)).astype(DTYPE)
-        y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-        y_data = y_data.reshape([len(y_data), 1])
-
-        exe.run(framework.default_main_program(),
-                feed={"pixel": img_data,
-                      "label": y_data},
-                fetch_list=[avg_cost] + accuracy.metrics)
-
-    pass_acc = accuracy.eval(exe)
-    return pass_acc
 
 
 def main():
