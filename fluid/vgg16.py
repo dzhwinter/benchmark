@@ -79,11 +79,13 @@ def main():
 
     # inference program
     inference_program = fluid.default_main_program().clone()
-    test_accuracy = fluid.evaluator.Accuracy(
-        input=predict, label=label, main_program=inference_program)
-    test_target = [avg_cost] + test_accuracy.metrics + test_accuracy.states
-    inference_program = fluid.io.get_inference_program(
-        test_target, main_program=inference_program)
+    with fluid.program_guard(inference_program):
+        test_accuracy = fluid.evaluator.Accuracy(
+            input=predict, label=label, main_program=inference_program)
+        test_target = [avg_cost] + test_accuracy.metrics + test_accuracy.states
+        inference_program = fluid.io.get_inference_program(
+            test_target, main_program=inference_program)
+
     # data reader
     train_reader = paddle.batch(
         paddle.reader.shuffle(
