@@ -77,6 +77,14 @@ def main():
 
     accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
 
+    # inference program
+    inference_program = fluid.default_main_program().clone()
+    test_accuracy = fluid.evaluator.Accuracy(
+        input=predict, label=label, main_program=inference_program)
+    test_target = [avg_cost] + test_accuracy.metrics + test_accuracy.states
+    inference_program = fluid.io.get_inference_program(
+        test_target, main_program=inference_program)
+    # data reader
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.cifar.train10(), buf_size=5120),
@@ -114,22 +122,22 @@ def main():
 
         pass_elapsed = time.clock() - start_time
         # test
-        accuracy.reset(exe)
+        test_accuracy.reset(exe)
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([len(y_data), 1])
 
-            exe.run(fluid.default_main_program(),
+            exe.run(inference_program,
                     feed={"pixel": img_data,
                           "label": y_data},
-                    fetch_list=[avg_cost] + accuracy.metrics)
+                    fetch_list=[avg_cost] + test_accuracy.metrics)
 
-        pass_acc = accuracy.eval(exe)
+        pass_test_acc = test_accuracy.eval(exe)
         print(
             "Pass = %d, Training performance = %f imgs/s, Test accuracy = %f\n"
-            % (pass_id, num_samples / pass_elapsed, pass_acc))
+            % (pass_id, num_samples / pass_elapsed, pass_test_acc))
 
 
 def print_arguments():
