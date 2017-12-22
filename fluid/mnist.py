@@ -15,6 +15,7 @@ DTYPE = "float32"
 # random seed must set before configuring the network.
 fluid.default_startup_program().random_seed = SEED
 
+
 def parse_args():
     parser = argparse.ArgumentParser("mnist model benchmark.")
     parser.add_argument(
@@ -35,13 +36,15 @@ def parse_args():
         '--use_cprof', action='store_true', help='If set, use cProfile.')
     parser.add_argument(
         '--use_nvprof',
-        action='store_false',
+        action='store_true',
         help='If set, use nvprof for CUDA.')
     args = parser.parse_args()
     return args
 
 
 def print_arguments(args):
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))

@@ -40,14 +40,15 @@ def parse_args():
         '--use_cprof', action='store_true', help='If set, use cProfile.')
     parser.add_argument(
         '--use_nvprof',
-        action='store_false',
+        action='store_true',
         help='If set, use nvprof for CUDA.')
     args = parser.parse_args()
     return args
 
 
 def print_arguments(args):
-    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and vars(args)['device']=='GPU')
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
