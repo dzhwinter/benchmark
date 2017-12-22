@@ -7,6 +7,7 @@ import argparse
 import cPickle
 import numpy
 import copy
+import random
 
 try:
     with open('word_dict.pkl', 'r') as f:
@@ -26,11 +27,14 @@ def cache_reader(reader):
         items = list(reader())
         with open('data.pkl', 'w') as f:
             cPickle.dump(items, f, cPickle.HIGHEST_PROTOCOL)
-    print 'Done.'
+
+    print 'Done. data size %d' % len(items)
 
     def __impl__():
-        for item in items:
-            yield item
+        offsets = range(len(items))
+        random.shuffle(offsets)
+        for i in offsets:
+            yield items[i]
 
     return __impl__
 
@@ -58,13 +62,39 @@ def main():
     rnn = fluid.layers.DynamicRNN()
     with rnn.block():
         word = rnn.step_input(sentence)
-        ex_state = rnn.memory(value=0.0, shape=[100])
-        hidden = fluid.layers.fc(input=[word, ex_state],
-                                 size=100,
-                                 act='tanh',
-                                 param_attr=copy.deepcopy(clip_grad),
-                                 bias_attr=copy.deepcopy(clip_grad))
-        rnn.update_memory(ex_state, hidden)
+        lstm_size = 16
+        prev_hidden = rnn.memory(value=0.0, shape=[lstm_size])
+        prev_cell = rnn.memory(value=0.0, shape=[lstm_size])
+
+        def gate_common(
+                ipt,
+                hidden,
+                size, ):
+            gate0 = fluid.layers.fc(input=ipt, size=size, bias_attr=True)
+            gate1 = fluid.layers.fc(input=hidden, size=size, bias_attr=False)
+            gate = fluid.layers.sums(input=[gate0, gate1])
+            return gate
+
+        forget_gate = fluid.layers.sigmoid(
+            x=gate_common(word, prev_hidden, lstm_size))
+        input_gate = fluid.layers.sigmoid(
+            x=gate_common(word, prev_hidden, lstm_size))
+        output_gate = fluid.layers.sigmoid(
+            x=gate_common(word, prev_hidden, lstm_size))
+        cell_gate = fluid.layers.sigmoid(
+            x=gate_common(word, prev_hidden, lstm_size))
+
+        cell = fluid.layers.sums(input=[
+            fluid.layers.elementwise_mul(
+                x=forget_gate, y=prev_cell), fluid.layers.elementwise_mul(
+                    x=input_gate, y=cell_gate)
+        ])
+
+        hidden = fluid.layers.elementwise_mul(
+            x=output_gate, y=fluid.layers.sigmoid(x=cell))
+
+        rnn.update_memory(prev_cell, cell)
+        rnn.update_memory(prev_hidden, hidden)
         rnn.output(hidden)
 
     last = fluid.layers.sequence_pool(rnn(), 'last')
@@ -81,12 +111,11 @@ def main():
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
-    train = cache_reader(imdb.train(word_dict))
 
     def train_loop(pass_num, crop_size):
+        cache = cache_reader(crop_sentence(imdb.train(word_dict), crop_size))
         for pass_id in range(pass_num):
-            train_reader = batch(
-                crop_sentence(train, crop_size), batch_size=args.batch_size)
+            train_reader = batch(cache, batch_size=args.batch_size)
             for batch_id, data in enumerate(train_reader()):
                 tensor_words = to_lodtensor([x[0] for x in data], place)
                 label = numpy.array([x[1] for x in data]).astype("int64")
@@ -98,7 +127,7 @@ def main():
                 print 'Pass', pass_id, 'Batch', batch_id, 'loss', loss_np
             print 'Pass', pass_id, 'Done'
 
-    train_loop(args.pass_num, 25)
+    train_loop(args.pass_num, args.crop_size)
 
 
 def parse_args():
@@ -127,7 +156,7 @@ def parse_args():
     parser.add_argument(
         '--crop_size',
         type=int,
-        default=int(os.environ.get('CROP_SIZE', '25')),
+        default=int(os.environ.get('CROP_SIZE', '35')),
         help='The max sentence length of input. Since this model use plain RNN,'
         ' Gradient could be explored if sentence is too long')
     args = parser.parse_args()
