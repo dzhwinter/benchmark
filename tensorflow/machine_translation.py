@@ -1,0 +1,476 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import tensorflow as tf
+from tensorflow.python.framework import dtypes
+from tensorflow.python.layers.core import Dense
+from tensorflow.python.ops import check_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import rnn_cell_impl
+from tensorflow.python.ops.rnn_cell_impl import RNNCell, BasicLSTMCell
+from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
+from tensorflow.contrib.rnn.python.ops import core_rnn_cell
+from tensorflow.python.ops import array_ops
+from tensorflow.python.util import nest
+import tensorflow.contrib.seq2seq as seq2seq
+from tensorflow.contrib.seq2seq.python.ops import beam_search_decoder
+import numpy as np
+import argparse
+import time
+
+import paddle.v2 as paddle
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--word_vector_dim",
+    type=int,
+    default=512,
+    help="The dimension of embedding table. (default: %(default)d)")
+parser.add_argument(
+    "--encoder_size",
+    type=int,
+    default=512,
+    help="The size of encoder bi-rnn unit. (default: %(default)d)")
+parser.add_argument(
+    "--decoder_size",
+    type=int,
+    default=512,
+    help="The size of decoder rnn unit. (default: %(default)d)")
+parser.add_argument(
+    "--batch_size",
+    type=int,
+    default=32,
+    help="The sequence number of a batch data. (default: %(default)d)")
+parser.add_argument(
+    "--dict_size",
+    type=int,
+    default=30000,
+    help="The dictionary capacity. Dictionaries of source sequence and "
+    "target dictionary have same capacity. (default: %(default)d)")
+parser.add_argument(
+    "--max_time_steps",
+    type=int,
+    default=81,
+    help="Max number of time steps for sequence. (default: %(default)d)")
+parser.add_argument(
+    "--pass_number",
+    type=int,
+    default=2,
+    help="The pass number to train. (default: %(default)d)")
+parser.add_argument(
+    "--mode",
+    type=str,
+    default='train',
+    choices=['train', 'infer'],
+    help="Do training or inference. (default: %(default)s)")
+parser.add_argument(
+    "--beam_size",
+    type=int,
+    default=3,
+    help="The width for beam searching. (default: %(default)d)")
+parser.add_argument(
+    "--max_generation_length",
+    type=int,
+    default=250,
+    help="The max length of sequence when doing generation. "
+    "(default: %(default)d)")
+
+_Linear = core_rnn_cell._Linear  # pylint: disable=invalid-name
+
+START_TOKEN_IDX = 0
+END_TOKEN_IDX = 1
+
+
+class LSTMCellWithSimpleAttention(RNNCell):
+    """Add attention mechanism to BasicLSTMCell.
+    This class is a wrapper based on tensorflow's `BasicLSTMCell`.
+    """
+
+    def __init__(self,
+                 num_units,
+                 encoder_vector,
+                 encoder_proj,
+                 source_sequence_length,
+                 forget_bias=1.0,
+                 state_is_tuple=True,
+                 activation=None,
+                 reuse=None):
+        super(LSTMCellWithSimpleAttention, self).__init__(_reuse=reuse)
+        if not state_is_tuple:
+            logging.warn("%s: Using a concatenated state is slower and will "
+                         "soon be deprecated. Use state_is_tuple=True.", self)
+        self._num_units = num_units
+        # set padding part to 0
+        self._encoder_vector = self._reset_padding(encoder_vector,
+                                                   source_sequence_length)
+        self._encoder_proj = self._reset_padding(encoder_proj,
+                                                 source_sequence_length)
+        self._forget_bias = forget_bias
+        self._state_is_tuple = state_is_tuple
+        self._activation = activation or math_ops.tanh
+        self._linear = None
+
+    def state_size(self):
+        return (LSTMStateTuple(self._num_units, self._num_units) \
+                if self._state_is_tuple else 2 * self._num_units)
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    def zero_state(self, batch_size, dtype):
+        state_size = self.state_size
+        if hasattr(self, "_last_zero_state"):
+            (last_state_size, last_batch_size, last_dtype,
+             last_output) = getattr(self, "_last_zero_state")
+            if (last_batch_size == batch_size and last_dtype == dtype and
+                    last_state_size == state_size):
+                return last_output
+        with ops.name_scope(
+                type(self).__name__ + "ZeroState", values=[batch_size]):
+            output = _zero_state_tensors(state_size, batch_size, dtype)
+        self._last_zero_state = (state_size, batch_size, dtype, output)
+        return output
+
+    def call(self, inputs, state):
+        sigmoid = math_ops.sigmoid
+        # Parameters of gates are concatenated into one multiply for efficiency.
+        if self._state_is_tuple:
+            c, h = state
+        else:
+            c, h = array_ops.split(value=state, num_or_size_splits=2, axis=1)
+
+        # get context from encoder outputs
+        context = self._simple_attention(self._encoder_vector,
+                                         self._encoder_proj, h)
+
+        if self._linear is None:
+            self._linear = _Linear([inputs, context, h], 4 * self._num_units,
+                                   True)
+        # i = input_gate, j = new_input, f = forget_gate, o = output_gate
+        i, j, f, o = array_ops.split(
+            value=self._linear([inputs, context, h]),
+            num_or_size_splits=4,
+            axis=1)
+
+        new_c = (c * sigmoid(f + self._forget_bias) + sigmoid(i) *
+                 self._activation(j))
+        new_h = self._activation(new_c) * sigmoid(o)
+
+        if self._state_is_tuple:
+            new_state = LSTMStateTuple(new_c, new_h)
+        else:
+            new_state = array_ops.concat([new_c, new_h], 1)
+        return new_h, new_state
+
+    def _simple_attention(self, encoder_vec, encoder_proj, decoder_state):
+        """Implement the attention function.
+        The implementation has the same logic to the fluid decoder.
+        """
+        decoder_state_proj = tf.contrib.layers.fully_connected(
+            inputs=decoder_state,
+            num_outputs=self._num_units,
+            activation_fn=None,
+            biases_initializer=None)
+        decoder_state_expand = tf.expand_dims(input=decoder_state_proj, axis=1)
+        decoder_state_expand = tf.tile(decoder_state_expand,
+                                       [1, tf.shape(encoder_proj)[1], 1])
+        concated = tf.concat([decoder_state_expand, encoder_proj], axis=2)
+        # need reduce the first dimension
+        attention_weights = tf.contrib.layers.fully_connected(
+            inputs=tf.reshape(
+                concated, shape=[-1, self._num_units * 2]),
+            num_outputs=1,
+            activation_fn=None,
+            biases_initializer=None)
+        attention_weights_reshaped = tf.reshape(
+            attention_weights, shape=[tf.shape(encoder_vec)[0], -1, 1])
+        # normalize the attention weights using softmax
+        attention_weights_normed = tf.nn.softmax(
+            attention_weights_reshaped, dim=1)
+        scaled = tf.multiply(attention_weights_normed, encoder_vec)
+        context = tf.reduce_sum(scaled, axis=1)
+        return context
+
+    def _reset_padding(self,
+                       memory,
+                       memory_sequence_length,
+                       check_inner_dims_defined=True):
+        """Reset the padding part for encoder inputs.
+        This funtion comes from tensorflow's `_prepare_memory` function.
+        """
+        memory = nest.map_structure(
+                lambda m: ops.convert_to_tensor(m, name="memory"), memory)
+        if memory_sequence_length is not None:
+            memory_sequence_length = ops.convert_to_tensor(
+                memory_sequence_length, name="memory_sequence_length")
+        if check_inner_dims_defined:
+
+            def _check_dims(m):
+                if not m.get_shape()[2:].is_fully_defined():
+                    raise ValueError(
+                        "Expected memory %s to have fully defined inner dims, "
+                        "but saw shape: %s" % (m.name, m.get_shape()))
+
+            nest.map_structure(_check_dims, memory)
+        if memory_sequence_length is None:
+            seq_len_mask = None
+        else:
+            seq_len_mask = array_ops.sequence_mask(
+                memory_sequence_length,
+                maxlen=array_ops.shape(nest.flatten(memory)[0])[1],
+                dtype=nest.flatten(memory)[0].dtype)
+            seq_len_batch_size = (memory_sequence_length.shape[0].value or
+                                  array_ops.shape(memory_sequence_length)[0])
+
+        def _maybe_mask(m, seq_len_mask):
+            rank = m.get_shape().ndims
+            rank = rank if rank is not None else array_ops.rank(m)
+            extra_ones = array_ops.ones(rank - 2, dtype=dtypes.int32)
+            m_batch_size = m.shape[0].value or array_ops.shape(m)[0]
+            if memory_sequence_length is not None:
+                message = ("memory_sequence_length and memory tensor "
+                           "batch sizes do not match.")
+                with ops.control_dependencies([
+                        check_ops.assert_equal(
+                            seq_len_batch_size, m_batch_size, message=message)
+                ]):
+                    seq_len_mask = array_ops.reshape(
+                        seq_len_mask,
+                        array_ops.concat(
+                            (array_ops.shape(seq_len_mask), extra_ones), 0))
+                return m * seq_len_mask
+            else:
+                return m
+
+        return nest.map_structure(lambda m: _maybe_mask(m, seq_len_mask),
+                                  memory)
+
+
+def seq_to_seq_net(word_vector_dim,
+                   max_time_steps,
+                   encoder_size,
+                   decoder_size,
+                   source_dict_dim,
+                   target_dict_dim,
+                   is_generating=False,
+                   beam_size=3,
+                   max_generation_length=250):
+    src_word_idx = tf.placeholder(tf.int32, shape=[None, max_time_steps])
+    src_sequence_length = tf.placeholder(tf.int32, shape=[None])
+
+    src_embedding_weights = tf.get_variable("source_word_embeddings",
+                                            [source_dict_dim, word_vector_dim])
+    src_embedding = tf.nn.embedding_lookup(src_embedding_weights, src_word_idx)
+
+    src_forward_cell = tf.nn.rnn_cell.BasicLSTMCell(encoder_size)
+    src_reversed_cell = tf.nn.rnn_cell.BasicLSTMCell(encoder_size)
+    # no peephole
+    encoder_outputs, _ = tf.nn.bidirectional_dynamic_rnn(
+        cell_fw=src_forward_cell,
+        cell_bw=src_reversed_cell,
+        inputs=src_embedding,
+        sequence_length=src_sequence_length,
+        dtype=tf.float32)
+
+    # concat the forward outputs and backward outputs
+    encoded_vec = tf.concat(encoder_outputs, axis=2)
+
+    # project the encoder outputs to size of decoder lstm
+    encoded_proj = tf.contrib.layers.fully_connected(
+        inputs=tf.reshape(
+            encoded_vec, shape=[-1, word_vector_dim * 2]),
+        num_outputs=decoder_size,
+        activation_fn=None,
+        biases_initializer=None)
+    encoded_proj = tf.reshape(
+        encoded_proj, shape=[-1, max_time_steps, decoder_size])
+
+    # get init state for decoder lstm's H
+    backword_first = tf.slice(encoder_outputs[1], [0, 0, 0], [-1, 1, -1])
+    decoder_boot = tf.contrib.layers.fully_connected(
+        inputs=tf.reshape(
+            backword_first, shape=[-1, word_vector_dim]),
+        num_outputs=decoder_size,
+        activation_fn=None,
+        biases_initializer=None)
+
+    # create decoder lstm cell
+    decoder_cell = LSTMCellWithSimpleAttention(
+        decoder_size,
+        encoded_vec,
+        encoded_proj,
+        src_sequence_length,
+        forget_bias=0.0)
+
+    # prepare the initial state for decoder lstm
+    cell_init = tf.zeros(tf.shape(decoder_boot), tf.float32)
+    initial_state = LSTMStateTuple(decoder_boot, cell_init)
+
+    output_layer = Dense(target_dict_dim, name='output_projection')
+
+    if not is_generating:
+        trg_word_idx = tf.placeholder(tf.int32, shape=[None, max_time_steps])
+        trg_sequence_length = tf.placeholder(tf.int32, shape=[None])
+        trg_embedding_weights = tf.get_variable(
+            "target_word_embeddings", [target_dict_dim, word_vector_dim])
+        trg_embedding = tf.nn.embedding_lookup(trg_embedding_weights,
+                                               trg_word_idx)
+
+        training_helper = seq2seq.TrainingHelper(
+            inputs=trg_embedding,
+            sequence_length=trg_sequence_length,
+            time_major=False,
+            name='training_helper')
+
+        training_decoder = seq2seq.BasicDecoder(
+            cell=decoder_cell,
+            helper=training_helper,
+            initial_state=initial_state,
+            output_layer=output_layer)
+
+        # get the max length of target sequence
+        max_decoder_length = tf.reduce_max(trg_sequence_length)
+
+        decoder_outputs_train, _, _ = seq2seq.dynamic_decode(
+            decoder=training_decoder,
+            output_time_major=False,
+            impute_finished=True,
+            maximum_iterations=max_decoder_length)
+
+        decoder_logits_train = tf.identity(decoder_outputs_train.rnn_output)
+        decoder_pred_train = tf.argmax(
+            decoder_logits_train, axis=-1, name='decoder_pred_train')
+
+        # get mask operator to eliminate the padding part
+        masks = tf.sequence_mask(
+            lengths=trg_sequence_length,
+            maxlen=max_decoder_length,
+            dtype=tf.float32,
+            name='masks')
+
+        # place holder of label sequence
+        lbl_word_idx = tf.placeholder(tf.int32, shape=[None, None])
+
+        # compute the loss
+        loss = seq2seq.sequence_loss(
+            logits=decoder_logits_train,
+            targets=lbl_word_idx,
+            weights=masks,
+            average_across_timesteps=True,
+            average_across_batch=True)
+
+        # return feeding list and loss operator
+        return (src_word_idx, src_sequence_length, trg_word_idx,
+                trg_sequence_length, lbl_word_idx), loss
+    else:
+        start_tokens = tf.placeholder(tf.int32, shape=[None])
+
+        # share the same embedding weights with target word
+        trg_embedding_weights = tf.get_variable(
+            "target_word_embeddings", [target_dict_dim, word_vector_dim])
+
+        embedding = tf.nn.embedding_lookup(trg_embedding_weights, start_tokens)
+
+        inference_decoder = beam_search_decoder.BeamSearchDecoder(
+            cell=decoder_cell,
+            embedding=embedding,
+            start_tokens=START_TOKEN_IDX,
+            end_token=END_TOKEN_IDX,
+            initial_state=initial_state,
+            beam_width=beam_size,
+            output_layer=output_layer)
+
+        decoder_outputs_decode, _, _ = seq2seq.dynamic_decode(
+            decoder=inference_decoder,
+            output_time_major=False,
+            #impute_finished=True,# error occurs
+            maximum_iterations=max_generation_length)
+
+        return start_tokens, decoder_outputs_decode.predicted_ids
+
+
+def padding_data(data, padding_size, value):
+    data = data + [value] * padding_size
+    return data[:padding_size]
+
+
+def train():
+    train_feed_list, loss = seq_to_seq_net(
+        word_vector_dim=args.word_vector_dim,
+        max_time_steps=args.max_time_steps,
+        encoder_size=args.encoder_size,
+        decoder_size=args.decoder_size,
+        source_dict_dim=args.dict_size,
+        target_dict_dim=args.dict_size,
+        is_generating=False,
+        beam_size=args.beam_size,
+        max_generation_length=args.max_generation_length)
+
+    global_step = tf.Variable(0, trainable=False, name='global_step')
+    trainable_params = tf.trainable_variables()
+    optimizer = tf.train.AdamOptimizer(learning_rate=1e-5)
+    gradients = tf.gradients(loss, trainable_params)
+    # may clip the parameters
+    updates = optimizer.apply_gradients(
+        zip(gradients, trainable_params), global_step=global_step)
+
+    src_dict, trg_dict = paddle.dataset.wmt14.get_dict(args.dict_size)
+    train_batch_generator = paddle.batch(
+        paddle.reader.shuffle(
+            paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
+        batch_size=args.batch_size)
+
+    config = tf.ConfigProto(
+        intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+    with tf.Session(config=config) as sess:
+        init_g = tf.global_variables_initializer()
+        init_l = tf.local_variables_initializer()
+        sess.run(init_l)
+        sess.run(init_g)
+        for pass_id in xrange(args.pass_number):
+            for batch_id, data in enumerate(train_batch_generator()):
+                src_seq = map(lambda x: x[0], data)
+                trg_seq = map(lambda x: x[1], data)
+                lbl_seq = map(lambda x: x[2], data)
+
+                src_sequence_length = np.array(
+                    [len(seq) for seq in src_seq]).astype('int32')
+                trg_sequence_length = np.array(
+                    [len(seq) for seq in trg_seq]).astype('int32')
+                trg_seq_maxlen = np.max(trg_sequence_length)
+
+                src_seq = np.array([
+                    padding_data(seq, args.max_time_steps, END_TOKEN_IDX)
+                    for seq in src_seq
+                ]).astype('int32')
+                trg_seq = np.array([
+                    padding_data(seq, args.max_time_steps, END_TOKEN_IDX)
+                    for seq in trg_seq
+                ]).astype('int32')
+                lbl_seq = np.array([
+                    padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
+                    for seq in lbl_seq
+                ]).astype('int32')
+
+                outputs = sess.run([updates, loss],
+                                   feed_dict={
+                                       train_feed_list[0]: src_seq,
+                                       train_feed_list[1]: src_sequence_length,
+                                       train_feed_list[2]: trg_seq,
+                                       train_feed_list[3]: trg_sequence_length,
+                                       train_feed_list[4]: lbl_seq
+                                   })
+
+                print("pass_id=%d, batch_id=%d, loss=%f" %
+                      (pass_id, batch_id, outputs[1]))
+
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    if args.mode == 'train':
+        train()
+    else:
+        pass
