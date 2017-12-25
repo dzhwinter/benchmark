@@ -58,7 +58,7 @@ parser.add_argument(
 parser.add_argument(
     "--pass_number",
     type=int,
-    default=2,
+    default=10,
     help="The pass number to train. (default: %(default)d)")
 parser.add_argument(
     "--learning_rate",
@@ -85,7 +85,7 @@ parser.add_argument(
 parser.add_argument(
     "--save_freq",
     type=int,
-    default=10000,
+    default=500,
     help="Save model checkpoint every this interation. (default: %(default)d)")
 parser.add_argument(
     "--model_dir",
@@ -529,45 +529,43 @@ def infer():
     src_dict, trg_dict = paddle.dataset.wmt14.get_dict(args.dict_size)
     test_batch_generator = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.wmt14.test(args.dict_size), buf_size=1000),
+            paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
         batch_size=args.batch_size)
 
     config = tf.ConfigProto(
         intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
     with tf.Session(config=config) as sess:
-        restore(sess, './checkpoint/tf_seq2seq-5200')
-        for pass_id in xrange(args.pass_number):
-            for batch_id, data in enumerate(test_batch_generator()):
-                src_seq = map(lambda x: x[0], data)
+        restore(sess, './checkpoint/tf_seq2seq-1500')
+        for batch_id, data in enumerate(test_batch_generator()):
+            src_seq = map(lambda x: x[0], data)
 
-                source_language_seq = [
-                    src_dict[item] for seq in src_seq for item in seq
-                ]
+            source_language_seq = [
+                src_dict[item] for seq in src_seq for item in seq
+            ]
 
-                src_sequence_length = np.array(
-                    [len(seq) for seq in src_seq]).astype('int32')
-                src_seq_maxlen = np.max(src_sequence_length)
-                src_seq = np.array([
-                    padding_data(seq, src_seq_maxlen, END_TOKEN_IDX)
-                    for seq in src_seq
-                ]).astype('int32')
+            src_sequence_length = np.array(
+                [len(seq) for seq in src_seq]).astype('int32')
+            src_seq_maxlen = np.max(src_sequence_length)
+            src_seq = np.array([
+                padding_data(seq, src_seq_maxlen, END_TOKEN_IDX)
+                for seq in src_seq
+            ]).astype('int32')
 
-                outputs = sess.run([predicted_ids],
-                                   feed_dict={
-                                       infer_feed_list[0].name: src_seq,
-                                       infer_feed_list[1].name:
-                                       src_sequence_length
-                                   })
+            outputs = sess.run([predicted_ids],
+                               feed_dict={
+                                   infer_feed_list[0].name: src_seq,
+                                   infer_feed_list[1].name: src_sequence_length
+                               })
 
-                print("\nDecoder result comparasion: ")
-                source_language_seq = ' '.join(source_language_seq).lstrip(
-                    '<s>').rstrip('<e>').strip()
-                inference_seq = ''
-                print(" --> source: " + source_language_seq)
-                for item in outputs[0][0]:
-                    if item[0] == END_TOKEN_IDX: break
-                    inference_seq += ' ' + trg_dict.get(item[0], '<unk>')
-                print(" --> inference: " + inference_seq)
+            print("\nDecoder result comparison: ")
+            source_language_seq = ' '.join(source_language_seq).lstrip(
+                '<s>').rstrip('<e>').strip()
+            inference_seq = ''
+            print(" --> source: " + source_language_seq)
+            for item in outputs[0][0]:
+                if item[0] == END_TOKEN_IDX: break
+                inference_seq += ' ' + trg_dict.get(item[0], '<unk>')
+            print(" --> inference: " + inference_seq)
 
 
 if __name__ == '__main__':
