@@ -17,6 +17,7 @@ from tensorflow.python.util import nest
 import tensorflow.contrib.seq2seq as seq2seq
 from tensorflow.contrib.seq2seq.python.ops import beam_search_decoder
 import numpy as np
+import os
 import argparse
 import time
 
@@ -41,7 +42,7 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=32,
+    default=128,
     help="The sequence number of a batch data. (default: %(default)d)")
 parser.add_argument(
     "--dict_size",
@@ -60,6 +61,11 @@ parser.add_argument(
     default=2,
     help="The pass number to train. (default: %(default)d)")
 parser.add_argument(
+    "--learning_rate",
+    type=float,
+    default=0.0002,
+    help="Learning rate used to train the model. (default: %(default)f)")
+parser.add_argument(
     "--mode",
     type=str,
     default='train',
@@ -76,6 +82,16 @@ parser.add_argument(
     default=250,
     help="The max length of sequence when doing generation. "
     "(default: %(default)d)")
+parser.add_argument(
+    "--save_freq",
+    type=int,
+    default=10000,
+    help="Save model checkpoint every this interation. (default: %(default)d)")
+parser.add_argument(
+    "--model_dir",
+    type=str,
+    default='./checkpoint',
+    help="Path to save model checkpoints. (default: %(default)d)")
 
 _Linear = core_rnn_cell._Linear  # pylint: disable=invalid-name
 
@@ -112,6 +128,7 @@ class LSTMCellWithSimpleAttention(RNNCell):
         self._activation = activation or math_ops.tanh
         self._linear = None
 
+    @property
     def state_size(self):
         return (LSTMStateTuple(self._num_units, self._num_units) \
                 if self._state_is_tuple else 2 * self._num_units)
@@ -174,9 +191,10 @@ class LSTMCellWithSimpleAttention(RNNCell):
             num_outputs=self._num_units,
             activation_fn=None,
             biases_initializer=None)
-        decoder_state_expand = tf.expand_dims(input=decoder_state_proj, axis=1)
-        decoder_state_expand = tf.tile(decoder_state_expand,
-                                       [1, tf.shape(encoder_proj)[1], 1])
+        decoder_state_expand = tf.tile(
+            tf.expand_dims(
+                input=decoder_state_proj, axis=1),
+            [1, tf.shape(encoder_proj)[1], 1])
         concated = tf.concat([decoder_state_expand, encoder_proj], axis=2)
         # need reduce the first dimension
         attention_weights = tf.contrib.layers.fully_connected(
@@ -250,7 +268,6 @@ class LSTMCellWithSimpleAttention(RNNCell):
 
 
 def seq_to_seq_net(word_vector_dim,
-                   max_time_steps,
                    encoder_size,
                    decoder_size,
                    source_dict_dim,
@@ -258,8 +275,8 @@ def seq_to_seq_net(word_vector_dim,
                    is_generating=False,
                    beam_size=3,
                    max_generation_length=250):
-    src_word_idx = tf.placeholder(tf.int32, shape=[None, max_time_steps])
-    src_sequence_length = tf.placeholder(tf.int32, shape=[None])
+    src_word_idx = tf.placeholder(tf.int32, shape=[None, None])
+    src_sequence_length = tf.placeholder(tf.int32, shape=[None, ])
 
     src_embedding_weights = tf.get_variable("source_word_embeddings",
                                             [source_dict_dim, word_vector_dim])
@@ -285,8 +302,8 @@ def seq_to_seq_net(word_vector_dim,
         num_outputs=decoder_size,
         activation_fn=None,
         biases_initializer=None)
-    encoded_proj = tf.reshape(
-        encoded_proj, shape=[-1, max_time_steps, decoder_size])
+    encoded_proj_reshape = tf.reshape(
+        encoded_proj, shape=[-1, tf.shape(encoded_vec)[1], decoder_size])
 
     # get init state for decoder lstm's H
     backword_first = tf.slice(encoder_outputs[1], [0, 0, 0], [-1, 1, -1])
@@ -297,23 +314,26 @@ def seq_to_seq_net(word_vector_dim,
         activation_fn=None,
         biases_initializer=None)
 
+    # prepare the initial state for decoder lstm
+    cell_init = tf.zeros(tf.shape(decoder_boot), tf.float32)
+    initial_state = LSTMStateTuple(cell_init, decoder_boot)
+
     # create decoder lstm cell
     decoder_cell = LSTMCellWithSimpleAttention(
         decoder_size,
-        encoded_vec,
-        encoded_proj,
-        src_sequence_length,
+        encoded_vec
+        if not is_generating else seq2seq.tile_batch(encoded_vec, beam_size),
+        encoded_proj_reshape if not is_generating else
+        seq2seq.tile_batch(encoded_proj_reshape, beam_size),
+        src_sequence_length if not is_generating else
+        seq2seq.tile_batch(src_sequence_length, beam_size),
         forget_bias=0.0)
-
-    # prepare the initial state for decoder lstm
-    cell_init = tf.zeros(tf.shape(decoder_boot), tf.float32)
-    initial_state = LSTMStateTuple(decoder_boot, cell_init)
 
     output_layer = Dense(target_dict_dim, name='output_projection')
 
     if not is_generating:
-        trg_word_idx = tf.placeholder(tf.int32, shape=[None, max_time_steps])
-        trg_sequence_length = tf.placeholder(tf.int32, shape=[None])
+        trg_word_idx = tf.placeholder(tf.int32, shape=[None, None])
+        trg_sequence_length = tf.placeholder(tf.int32, shape=[None, ])
         trg_embedding_weights = tf.get_variable(
             "target_word_embeddings", [target_dict_dim, word_vector_dim])
         trg_embedding = tf.nn.embedding_lookup(trg_embedding_weights,
@@ -343,8 +363,6 @@ def seq_to_seq_net(word_vector_dim,
         decoder_logits_train = tf.identity(decoder_outputs_train.rnn_output)
         decoder_pred_train = tf.argmax(
             decoder_logits_train, axis=-1, name='decoder_pred_train')
-
-        # get mask operator to eliminate the padding part
         masks = tf.sequence_mask(
             lengths=trg_sequence_length,
             maxlen=max_decoder_length,
@@ -366,20 +384,20 @@ def seq_to_seq_net(word_vector_dim,
         return (src_word_idx, src_sequence_length, trg_word_idx,
                 trg_sequence_length, lbl_word_idx), loss
     else:
-        start_tokens = tf.placeholder(tf.int32, shape=[None])
-
+        start_tokens = tf.ones([tf.shape(src_word_idx)[0], ],
+                               tf.int32) * START_TOKEN_IDX
         # share the same embedding weights with target word
         trg_embedding_weights = tf.get_variable(
             "target_word_embeddings", [target_dict_dim, word_vector_dim])
 
-        embedding = tf.nn.embedding_lookup(trg_embedding_weights, start_tokens)
-
         inference_decoder = beam_search_decoder.BeamSearchDecoder(
             cell=decoder_cell,
-            embedding=embedding,
-            start_tokens=START_TOKEN_IDX,
+            embedding=lambda tokens: tf.nn.embedding_lookup(trg_embedding_weights, tokens),
+            start_tokens=start_tokens,
             end_token=END_TOKEN_IDX,
-            initial_state=initial_state,
+            initial_state=tf.nn.rnn_cell.LSTMStateTuple(
+                tf.contrib.seq2seq.tile_batch(initial_state[0], beam_size),
+                tf.contrib.seq2seq.tile_batch(initial_state[1], beam_size)),
             beam_width=beam_size,
             output_layer=output_layer)
 
@@ -389,7 +407,15 @@ def seq_to_seq_net(word_vector_dim,
             #impute_finished=True,# error occurs
             maximum_iterations=max_generation_length)
 
-        return start_tokens, decoder_outputs_decode.predicted_ids
+        return (src_word_idx,
+                src_sequence_length), decoder_outputs_decode.predicted_ids
+
+
+def print_arguments(args):
+    print('-----------  Configuration Arguments -----------')
+    for arg, value in vars(args).iteritems():
+        print('%s: %s' % (arg, value))
+    print('------------------------------------------------')
 
 
 def padding_data(data, padding_size, value):
@@ -397,10 +423,22 @@ def padding_data(data, padding_size, value):
     return data[:padding_size]
 
 
+def save(sess, path, var_list=None, global_step=None):
+    saver = tf.train.Saver(var_list)
+    save_path = saver.save(sess, save_path=path, global_step=global_step)
+    print('Model save at %s' % save_path)
+
+
+def restore(sess, path, var_list=None):
+    # var_list = None returns the list of all saveable variables
+    saver = tf.train.Saver(var_list)
+    saver.restore(sess, save_path=path)
+    print('model restored from %s' % path)
+
+
 def train():
     train_feed_list, loss = seq_to_seq_net(
         word_vector_dim=args.word_vector_dim,
-        max_time_steps=args.max_time_steps,
         encoder_size=args.encoder_size,
         decoder_size=args.decoder_size,
         source_dict_dim=args.dict_size,
@@ -411,9 +449,12 @@ def train():
 
     global_step = tf.Variable(0, trainable=False, name='global_step')
     trainable_params = tf.trainable_variables()
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-5)
+    optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+
     gradients = tf.gradients(loss, trainable_params)
     # may clip the parameters
+    clip_gradients, _ = tf.clip_by_global_norm(gradients, 1.0)
+
     updates = optimizer.apply_gradients(
         zip(gradients, trainable_params), global_step=global_step)
 
@@ -438,16 +479,17 @@ def train():
 
                 src_sequence_length = np.array(
                     [len(seq) for seq in src_seq]).astype('int32')
+                src_seq_maxlen = np.max(src_sequence_length)
                 trg_sequence_length = np.array(
                     [len(seq) for seq in trg_seq]).astype('int32')
                 trg_seq_maxlen = np.max(trg_sequence_length)
 
                 src_seq = np.array([
-                    padding_data(seq, args.max_time_steps, END_TOKEN_IDX)
+                    padding_data(seq, src_seq_maxlen, END_TOKEN_IDX)
                     for seq in src_seq
                 ]).astype('int32')
                 trg_seq = np.array([
-                    padding_data(seq, args.max_time_steps, END_TOKEN_IDX)
+                    padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
                     for seq in trg_seq
                 ]).astype('int32')
                 lbl_seq = np.array([
@@ -467,10 +509,71 @@ def train():
                 print("pass_id=%d, batch_id=%d, loss=%f" %
                       (pass_id, batch_id, outputs[1]))
 
+                if global_step.eval() % args.save_freq == 0:
+                    print('Saving model..')
+                    checkpoint_path = os.path.join(args.model_dir, 'tf_seq2seq')
+                    save(sess, checkpoint_path, global_step=global_step)
+
+
+def infer():
+    infer_feed_list, predicted_ids = seq_to_seq_net(
+        word_vector_dim=args.word_vector_dim,
+        encoder_size=args.encoder_size,
+        decoder_size=args.decoder_size,
+        source_dict_dim=args.dict_size,
+        target_dict_dim=args.dict_size,
+        is_generating=True,
+        beam_size=args.beam_size,
+        max_generation_length=args.max_generation_length)
+
+    src_dict, trg_dict = paddle.dataset.wmt14.get_dict(args.dict_size)
+    test_batch_generator = paddle.batch(
+        paddle.reader.shuffle(
+            paddle.dataset.wmt14.test(args.dict_size), buf_size=1000),
+        batch_size=args.batch_size)
+
+    config = tf.ConfigProto(
+        intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+    with tf.Session(config=config) as sess:
+        restore(sess, './checkpoint/tf_seq2seq-5200')
+        for pass_id in xrange(args.pass_number):
+            for batch_id, data in enumerate(test_batch_generator()):
+                src_seq = map(lambda x: x[0], data)
+
+                source_language_seq = [
+                    src_dict[item] for seq in src_seq for item in seq
+                ]
+
+                src_sequence_length = np.array(
+                    [len(seq) for seq in src_seq]).astype('int32')
+                src_seq_maxlen = np.max(src_sequence_length)
+                src_seq = np.array([
+                    padding_data(seq, src_seq_maxlen, END_TOKEN_IDX)
+                    for seq in src_seq
+                ]).astype('int32')
+
+                outputs = sess.run([predicted_ids],
+                                   feed_dict={
+                                       infer_feed_list[0].name: src_seq,
+                                       infer_feed_list[1].name:
+                                       src_sequence_length
+                                   })
+
+                print("\nDecoder result comparasion: ")
+                source_language_seq = ' '.join(source_language_seq).lstrip(
+                    '<s>').rstrip('<e>').strip()
+                inference_seq = ''
+                print(" --> source: " + source_language_seq)
+                for item in outputs[0][0]:
+                    if item[0] == END_TOKEN_IDX: break
+                    inference_seq += ' ' + trg_dict.get(item[0], '<unk>')
+                print(" --> inference: " + inference_seq)
+
 
 if __name__ == '__main__':
     args = parser.parse_args()
+    print_arguments(args)
     if args.mode == 'train':
         train()
     else:
-        pass
+        infer()
