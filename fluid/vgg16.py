@@ -11,7 +11,7 @@ import functools
 
 parser = argparse.ArgumentParser("VGG16 benchmark.")
 parser.add_argument(
-    '--batch_size', type=int, default=128, help="Batch size for training.")
+    '--batch_size', type=int, default=32, help="Batch size for training.")
 parser.add_argument(
     '--learning_rate',
     type=float,
@@ -30,6 +30,12 @@ parser.add_argument(
     default='NCHW',
     choices=['NCHW', 'NHWC'],
     help='The data order, now only support NCHW.')
+parser.add_argument(
+    '--data_set',
+    type=str,
+    default='cifar10',
+    choices=['cifar10', 'flowers'],
+    help='Optional dataset for benchmark.')
 args = parser.parse_args()
 
 
@@ -61,8 +67,12 @@ def vgg16_bn_drop(input):
 
 
 def main():
-    classdim = 10
-    data_shape = [3, 32, 32]
+    if args.data_set == "cifar10":
+        classdim = 10
+        data_shape = [3, 32, 32]
+    else:
+        classdim = 102
+        data_shape = [3, 224, 224]
 
     images = fluid.layers.data(name='pixel', shape=data_shape, dtype='float32')
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
@@ -89,9 +99,14 @@ def main():
     # data reader
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.cifar.train10(), buf_size=5120),
+            paddle.dataset.cifar.train10()
+            if args.data_set == 'cifar10' else paddle.dataset.flowers.train(),
+            buf_size=5120),
         batch_size=args.batch_size)
-    test_reader = paddle.batch(paddle.dataset.cifar.test10(), batch_size=100)
+    test_reader = paddle.batch(
+        paddle.dataset.cifar.test10()
+        if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
+        batch_size=args.batch_size)
 
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
@@ -101,17 +116,14 @@ def main():
     iters = 0
     for pass_id in range(args.num_passes):
         # train
-        start_time = time.clock()
+        start_time = time.time()
         num_samples = 0
         accuracy.reset(exe)
         for batch_id, data in enumerate(train_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-            batch_size = 1
-            for i in y_data.shape:
-                batch_size = batch_size * i
-            y_data = y_data.reshape([batch_size, 1])
+            y_data = y_data.reshape([-1, 1])
 
             loss, acc = exe.run(fluid.default_main_program(),
                                 feed={"pixel": img_data,
@@ -122,14 +134,14 @@ def main():
             print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                   (pass_id, iters, loss, acc))
 
-        pass_elapsed = time.clock() - start_time
+        pass_elapsed = time.time() - start_time
         # test
         test_accuracy.reset(exe)
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-            y_data = y_data.reshape([len(y_data), 1])
+            y_data = y_data.reshape([-1, 1])
 
             exe.run(inference_program,
                     feed={"pixel": img_data,

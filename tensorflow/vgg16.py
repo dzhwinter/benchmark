@@ -32,7 +32,7 @@ parser.add_argument(
     type=str,
     default='cifar10',
     choices=['cifar10', 'flowers'],
-    help='Optional dataset for benchmark')
+    help='Optional dataset for benchmark.')
 args = parser.parse_args()
 
 
