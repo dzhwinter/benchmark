@@ -7,7 +7,7 @@ import time
 
 parser = argparse.ArgumentParser("VGG16 benchmark.")
 parser.add_argument(
-    '--batch_size', type=int, default=128, help="Batch size for training.")
+    '--batch_size', type=int, default=32, help="Batch size for training.")
 parser.add_argument(
     '--learning_rate',
     type=float,
@@ -27,6 +27,12 @@ parser.add_argument(
     choices=['NCHW', 'NHWC'],
     help='The data order, NCHW=[batch, channels, height, width].'
     'Only support NHWC right now.')
+parser.add_argument(
+    '--data_set',
+    type=str,
+    default='cifar10',
+    choices=['cifar10', 'flowers'],
+    help='Optional dataset for benchmark')
 args = parser.parse_args()
 
 
@@ -36,8 +42,8 @@ class VGG16Model(object):
 
     def batch_norm_relu(self, inputs, is_training):
         """Performs a batch normalization followed by a ReLU."""
-        # We set fused=True for a significant performance boost. See
-        # https://www.tensorflow.org/performance/performance_guide#common_fused_ops
+        # We set fused=True for a significant speed boost. See
+        # https://www.tensorflow.org/speed/speed_guide#common_fused_ops
         inputs = tf.layers.batch_normalization(
             inputs=inputs,
             axis=1 if args.data_format == 'NCHW' else -1,
@@ -74,7 +80,6 @@ class VGG16Model(object):
             out = tf.nn.bias_add(conv, biases)
             out = self.batch_norm_relu(out, is_training)
             out = tf.layers.dropout(out, rate=drop_rate, training=is_training)
-            #self.parameters += [kernel, biases]
             return out
 
     def fc_layer(self, name, inputs, shape):
@@ -89,10 +94,14 @@ class VGG16Model(object):
                 trainable=True,
                 name='biases')
             out = tf.nn.bias_add(tf.matmul(inputs, fc_w), fc_b)
-            #self.parameters += [fc_w, fc_b]
             return out
 
     def network(self, images, class_dim, is_training):
+        """ VGG16 model structure.
+
+            TODO(kuke): enable this network to support the 'NCHW' data format
+        """
+
         # conv1
         conv1_1 = self.conv_bn_layer(
             'conv1_1', images, [3, 3, 3, 64], is_training, drop_rate=0.3)
@@ -174,21 +183,25 @@ class VGG16Model(object):
 
         return fc3
 
-    def load_weights(self, weight_file, sess):
-        weights = np.load(weight_file)
-        keys = sorted(weights.keys())
-        for i, k in enumerate(keys):
-            print i, k, np.shape(weights[k])
-            sess.run(self.parameters[i].assign(weights[k]))
-
 
 def run_benchmark():
-    """Use cifar10."""
-    class_dim = 10
-    dshape = (None, 32, 32, 3)  # (N, H, W, C)
+    """Run benchmark on cifar10 or flowers."""
+
+    if args.data_set == "cifar10":
+        class_dim = 10
+        raw_shape = (3, 32, 32)
+        dat_shape = (None, 32, 32, 3) if args.data_format == 'NHWC' else (
+            None, 3, 32, 32)
+    else:
+        class_dim = 102
+        raw_shape = (3, 224, 224)
+        dat_shape = (None, 224, 224, 3) if args.data_format == 'NHWC' else (
+            None, 3, 224, 224)
+
     device = '/cpu:0' if args.device == 'CPU' else '/device:GPU:0'
+
     with tf.device(device):
-        images = tf.placeholder(tf.float32, shape=dshape)
+        images = tf.placeholder(tf.float32, shape=dat_shape)
         labels = tf.placeholder(tf.int64, shape=(None, ))
         is_training = tf.placeholder('bool')
         onehot_labels = tf.one_hot(labels, depth=class_dim)
@@ -211,12 +224,16 @@ def run_benchmark():
     # data reader
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.cifar.train10(), buf_size=5120),
+            paddle.dataset.cifar.train10()
+            if args.data_set == 'cifar10' else paddle.dataset.flowers.train(),
+            buf_size=5120),
         batch_size=args.batch_size)
     test_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.cifar.test10(), buf_size=5120),
-        batch_size=100)
+            paddle.dataset.cifar.test10()
+            if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
+            buf_size=5120),
+        batch_size=args.batch_size)
 
     with tf.Session() as sess:
         init_g = tf.global_variables_initializer()
@@ -227,12 +244,12 @@ def run_benchmark():
         for pass_id in range(args.num_passes):
             # train
             num_samples = 0
-            start_time = time.clock()
+            start_time = time.time()
             for batch_id, data in enumerate(train_reader()):
 
                 train_images = np.array(
-                    map(lambda x: np.transpose(x[0].reshape([3, 32, 32]),
-                    axes=[1, 2, 0]), data)).astype("float32")
+                    map(lambda x: np.transpose(x[0].reshape(raw_shape),
+                    axes=[1, 2, 0]) if args.data_format == 'NHWC' else x[0], data)).astype("float32")
                 train_labels = np.array(map(lambda x: x[1], data)).astype(
                     'int64')
                 _, loss, acc, g_acc = sess.run(
@@ -246,14 +263,14 @@ def run_benchmark():
                 print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                       (pass_id, iters, loss, acc))
                 num_samples += len(data)
-            train_elapsed = time.clock() - start_time
+            train_elapsed = time.time() - start_time
 
             # evaluation
             test_accs = []
             for batch_id, data in enumerate(test_reader()):
                 test_images = np.array(
-                    map(lambda x: np.transpose(x[0].reshape([3, 32, 32]),
-                    axes=[1, 2, 0]), data)).astype("float32")
+                    map(lambda x: np.transpose(x[0].reshape(raw_shape),
+                    axes=[1, 2, 0]) if args.data_format == 'NHWC' else x[0], data)).astype("float32")
                 test_labels = np.array(map(lambda x: x[1], data)).astype(
                     'int64')
                 test_accs.append(
@@ -263,9 +280,8 @@ def run_benchmark():
                         is_training: False
                     }))
 
-            print(
-                "Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n"
-                % (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
+            print("Pass = %d, Train speed = %f imgs/s, Test accuracy = %f\n" %
+                  (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
 
 
 def print_arguments():
