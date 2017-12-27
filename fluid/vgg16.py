@@ -9,7 +9,7 @@ import paddle.v2.fluid as fluid
 import argparse
 import functools
 
-parser = argparse.ArgumentParser("VGG16 benchmark.")
+parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     '--batch_size', type=int, default=32, help="Batch size for training.")
 parser.add_argument(
@@ -108,6 +108,22 @@ def main():
         if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
         batch_size=args.batch_size)
 
+    # test
+    def test(exe):
+        test_accuracy.reset(exe)
+        for batch_id, data in enumerate(test_reader()):
+            img_data = np.array(map(lambda x: x[0].reshape(data_shape),
+                                    data)).astype("float32")
+            y_data = np.array(map(lambda x: x[1], data)).astype("int64")
+            y_data = y_data.reshape([-1, 1])
+
+            exe.run(inference_program,
+                    feed={"pixel": img_data,
+                          "label": y_data},
+                    fetch_list=[avg_cost] + test_accuracy.metrics)
+
+        return test_accuracy.eval(exe)
+
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
 
@@ -133,22 +149,9 @@ def main():
             num_samples += len(data)
             print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                   (pass_id, iters, loss, acc))
-
         pass_elapsed = time.time() - start_time
-        # test
-        test_accuracy.reset(exe)
-        for batch_id, data in enumerate(test_reader()):
-            img_data = np.array(map(lambda x: x[0].reshape(data_shape),
-                                    data)).astype("float32")
-            y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-            y_data = y_data.reshape([-1, 1])
 
-            exe.run(inference_program,
-                    feed={"pixel": img_data,
-                          "label": y_data},
-                    fetch_list=[avg_cost] + test_accuracy.metrics)
-
-        pass_test_acc = test_accuracy.eval(exe)
+        pass_test_acc = test(exe)
         print(
             "Pass = %d, Training performance = %f imgs/s, Test accuracy = %f\n"
             % (pass_id, num_samples / pass_elapsed, pass_test_acc))

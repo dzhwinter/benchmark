@@ -5,7 +5,7 @@ import numpy as np
 import argparse
 import time
 
-parser = argparse.ArgumentParser("VGG16 benchmark.")
+parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     '--batch_size', type=int, default=32, help="Batch size for training.")
 parser.add_argument(
@@ -214,7 +214,6 @@ def run_benchmark():
 
         correct = tf.equal(tf.argmax(logits, 1), labels)
         accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
-        g_accuracy = tf.metrics.accuracy(labels, tf.argmax(logits, axis=1))
 
         optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -235,6 +234,22 @@ def run_benchmark():
             buf_size=5120),
         batch_size=args.batch_size)
 
+    # test
+    def test():
+        test_accs = []
+        for batch_id, data in enumerate(test_reader()):
+            test_images = np.array(
+         map(lambda x: np.transpose(x[0].reshape(raw_shape),
+         axes=[1, 2, 0]) if args.data_format == 'NHWC' else x[0], data)).astype("float32")
+            test_labels = np.array(map(lambda x: x[1], data)).astype('int64')
+            test_accs.append(
+                accuracy.eval(feed_dict={
+                    images: test_images,
+                    labels: test_labels,
+                    is_training: False
+                }))
+        return np.mean(test_accs)
+
     with tf.Session() as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
@@ -246,42 +261,26 @@ def run_benchmark():
             num_samples = 0
             start_time = time.time()
             for batch_id, data in enumerate(train_reader()):
-
                 train_images = np.array(
                     map(lambda x: np.transpose(x[0].reshape(raw_shape),
                     axes=[1, 2, 0]) if args.data_format == 'NHWC' else x[0], data)).astype("float32")
                 train_labels = np.array(map(lambda x: x[1], data)).astype(
                     'int64')
-                _, loss, acc, g_acc = sess.run(
-                    [train_op, avg_loss, accuracy, g_accuracy],
-                    feed_dict={
-                        images: train_images,
-                        labels: train_labels,
-                        is_training: True
-                    })
+                _, loss, acc = sess.run([train_op, avg_loss, accuracy],
+                                        feed_dict={
+                                            images: train_images,
+                                            labels: train_labels,
+                                            is_training: True
+                                        })
                 iters += 1
                 print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                       (pass_id, iters, loss, acc))
                 num_samples += len(data)
             train_elapsed = time.time() - start_time
-
-            # evaluation
-            test_accs = []
-            for batch_id, data in enumerate(test_reader()):
-                test_images = np.array(
-                    map(lambda x: np.transpose(x[0].reshape(raw_shape),
-                    axes=[1, 2, 0]) if args.data_format == 'NHWC' else x[0], data)).astype("float32")
-                test_labels = np.array(map(lambda x: x[1], data)).astype(
-                    'int64')
-                test_accs.append(
-                    accuracy.eval(feed_dict={
-                        images: test_images,
-                        labels: test_labels,
-                        is_training: False
-                    }))
-
+            # test
+            pass_test_acc = test()
             print("Pass = %d, Train speed = %f imgs/s, Test accuracy = %f\n" %
-                  (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
+                  (pass_id, num_samples / train_elapsed, pass_test_acc))
 
 
 def print_arguments():
