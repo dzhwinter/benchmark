@@ -6,12 +6,13 @@ import time
 import numpy as np
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import argparse
 import functools
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
-    '--batch_size', type=int, default=32, help="Batch size for training.")
+    '--batch_size', type=int, default=128, help="Batch size for training.")
 parser.add_argument(
     '--learning_rate',
     type=float,
@@ -124,7 +125,7 @@ def main():
 
         return test_accuracy.eval(exe)
 
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
 
     exe.run(fluid.default_startup_program())

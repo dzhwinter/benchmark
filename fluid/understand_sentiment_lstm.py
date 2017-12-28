@@ -8,6 +8,7 @@ import time
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
 
 
@@ -146,7 +147,7 @@ def run_benchmark(model, args):
             paddle.dataset.imdb.train(word_dict),
             buf_size=25000),  # only for speed
         batch_size=args.batch_size)
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
     for it, pass_id in enumerate(xrange(args.pass_num)):

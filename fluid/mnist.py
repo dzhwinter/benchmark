@@ -8,6 +8,7 @@ import time
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
 
 SEED = 1
@@ -122,7 +123,7 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.dataset.mnist.train(), batch_size=args.batch_size)
 
-    place = fluid.CPUPlace()
+    place = core.CPUPlace()
     exe = fluid.Executor(place)
 
     exe.run(fluid.default_startup_program())
