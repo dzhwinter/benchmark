@@ -6,6 +6,7 @@ import time
 import numpy as np
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import argparse
 import functools
 
@@ -36,6 +37,19 @@ parser.add_argument(
     default='cifar10',
     choices=['cifar10', 'flowers'],
     help='Optional dataset for benchmark.')
+
+parser.add_argument(
+    '--skip_batch_num',
+    type=int,
+    default=20,
+    help='The first num of minibatch num to skip, for better performance test')
+parser.add_argument(
+    '--iterations',
+    type=int,
+    default=120,
+    help='The number of final iteration.')
+parser.add_argument(
+    '--step', type=int, default=100, help='The number of iterations showing a loss.')
 args = parser.parse_args()
 
 
@@ -124,32 +138,55 @@ def main():
 
         return test_accuracy.eval(exe)
 
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
 
     exe.run(fluid.default_startup_program())
 
     iters = 0
     for pass_id in range(args.num_passes):
-        # train
+        # train     
+        if iters == args.iterations:
+            break
+        accuracy.reset(exe)   
+        pass_start_time = time.time()
+        batch_start_time = time.time()
         start_time = time.time()
         num_samples = 0
-        accuracy.reset(exe)
         for batch_id, data in enumerate(train_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
-            loss, acc = exe.run(fluid.default_main_program(),
+            outs = exe.run(fluid.default_main_program(),
                                 feed={"pixel": img_data,
                                       "label": y_data},
-                                fetch_list=[avg_cost] + accuracy.metrics)
-            iters += 1
+                                fetch_list=[avg_cost] + accuracy.metrics if batch_id % args.step==0 else [])
+            if batch_id % args.step == 0:
+                batch_end_time = time.time()
+                pass_acc = accuracy.eval(exe)
+                print(
+                    "Pass_id:%d, batch_id:%d, Iter: %d, loss: %.5f, acc: %.5f, pass_acc: %.5f, elapse: %f"
+                    % (pass_id, batch_id, iters, outs[0][0], outs[1][0],
+                       pass_acc[0], (batch_end_time - batch_start_time)))
+                batch_start_time = time.time()
+
             num_samples += len(data)
-            print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
-                  (pass_id, iters, loss, acc))
-        pass_elapsed = time.time() - start_time
+            if iters == args.skip_batch_num:
+                start_time = time.time()
+            if iters == args.iterations:
+                break
+            iters += 1
+
+        pass_elapsed = time.time() - pass_start_time
+        print("Iter: %d, elapse: %f" % (iters, pass_elapsed))
+        duration = time.time() - start_time
+        examples_per_sec = num_samples / duration
+        sec_per_batch = duration / (iters - args.skip_batch_num)
+        print('\nTotal examples: %d, total time: %.5f' % (num_samples, duration))
+        print('%.5f examples/sec, %.5f sec/batch \n' %
+              (examples_per_sec, sec_per_batch))
 
         pass_test_acc = test(exe)
         print(

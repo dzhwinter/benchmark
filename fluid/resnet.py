@@ -12,6 +12,7 @@ import cProfile, pstats, StringIO
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
 import paddle.v2.fluid.profiler as profiler
+import paddle.v2.fluid.core as core
 
 
 def parse_args():
@@ -31,13 +32,18 @@ def parse_args():
     parser.add_argument(
         '--skip_batch_num',
         type=int,
-        default=5,
+        default=20,
         help='The first num of minibatch num to skip, for better performance test'
     )
     parser.add_argument(
-        '--iterations', type=int, default=80, help='The number of minibatches.')
+        '--iterations',
+        type=int,
+        default=120,
+        help='The number of final iteration.')
     parser.add_argument(
         '--pass_num', type=int, default=100, help='The number of passes.')
+    parser.add_argument(
+        '--step', type=int, default=100, help='The number of iterations showing a loss.')
     parser.add_argument(
         '--order',
         type=str,
@@ -47,7 +53,7 @@ def parse_args():
     parser.add_argument(
         '--device',
         type=str,
-        default='GPU',
+        default='CPU',
         choices=['CPU', 'GPU'],
         help='The device type.')
     parser.add_argument(
@@ -63,7 +69,8 @@ def parse_args():
 
 
 def print_arguments(args):
-    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and vars(args)['device']=='GPU')
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
@@ -155,7 +162,7 @@ def run_benchmark(model, args):
             paddle.dataset.flowers.train(), buf_size=5120),
         batch_size=args.batch_size)
 
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
@@ -172,26 +179,39 @@ def run_benchmark(model, args):
         accuracy.reset(exe)
         if iter == args.iterations:
             break
+        pass_start_time = time.time()
+        batch_start_time = time.time()
         for batch_id, data in enumerate(train_reader()):
-            if iter == args.skip_batch_num:
-                start_time = time.time()
-            if iter == args.iterations:
-                break
             if not args.use_fake_data:
                 image = np.array(map(lambda x: x[0].reshape(dshape),
                                      data)).astype('float32')
                 label = np.array(map(lambda x: x[1], data)).astype('int64')
                 label = label.reshape([-1, 1])
-            loss, acc = exe.run(fluid.default_main_program(),
-                                feed={'data': image,
-                                      'label': label},
-                                fetch_list=[avg_cost] + accuracy.metrics)
-            pass_acc = accuracy.eval(exe)
-            print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (iter, str(loss), str(acc), str(pass_acc)))
-            iter += 1
-            im_num += label.shape[0]
+            outs = exe.run(fluid.default_main_program(),
+                           feed={'data': image,
+                                 'label': label},
+                           fetch_list=[avg_cost] + accuracy.metrics
+                           if batch_id % args.step == 0 else [])
 
+            if batch_id % args.step == 0:
+                batch_end_time = time.time()
+                pass_acc = accuracy.eval(exe)
+                print(
+                    "Pass_id:%d, batch_id:%d, Iter: %d, loss: %.5f, acc: %.5f, pass_acc: %.5f, elapse: %f"
+                    % (pass_id, batch_id, iter, outs[0][0], outs[1][0],
+                       pass_acc[0], (batch_end_time - batch_start_time)))
+                batch_start_time = time.time()
+
+            im_num += label.shape[0]
+            if iter == args.skip_batch_num:
+                start_time = time.time()
+            if iter == args.iterations:
+                break
+            iter += 1
+
+        pass_end_time = time.time()
+        print("Iter: %d, elapse: %f" % (iter,
+                                        (pass_end_time - pass_start_time)))
     duration = time.time() - start_time
     im_num = im_num - args.skip_batch_num * args.batch_size
     examples_per_sec = im_num / duration
