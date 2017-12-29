@@ -11,6 +11,7 @@ import cProfile, pstats, StringIO
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
 
 
@@ -63,7 +64,8 @@ def parse_args():
 
 
 def print_arguments(args):
-    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and vars(args)['device']=='GPU')
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
@@ -155,7 +157,7 @@ def run_benchmark(model, args):
             paddle.dataset.flowers.train(), buf_size=5120),
         batch_size=args.batch_size)
 
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
