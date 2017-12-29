@@ -56,10 +56,10 @@ def main():
 
     if args.data_set == "cifar10":
         CLASS_DIM = 10
-        DATA_DIM = [3, 32, 32]
+        DATA_DIM = 3*32*32
     elif args.data_set == "flowers":
         CLASS_DIM = 102
-        DATA_DIM = [3, 224, 224]
+        DATA_DIM = 3 * 224 * 224 
 
     # PaddlePaddle init
     paddle.init(use_gpu=args.device == 'GPU', trainer_count=1)
