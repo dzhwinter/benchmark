@@ -2,7 +2,6 @@ import gzip
 import argparse
 import time
 
-import paddle.v2.dataset.flowers as flowers
 import paddle.v2 as paddle
 import reader
 import vgg
@@ -34,6 +33,12 @@ def main():
         choices=['CPU', 'GPU'],
         help='The device type.')
     parser.add_argument(
+        '--data_set',
+        type=str,
+        default='cifar10',
+        choices=['cifar10', 'flowers'],
+        help='Optional dataset for benchmark.')
+    parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
         '--step', type=int, default=100, help='The number of iterations showing a loss.')
@@ -48,6 +53,13 @@ def main():
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
+
+    if args.data_set == "cifar10":
+        CLASS_DIM = 10
+        DATA_DIM = [3, 32, 32]
+    elif args.data_set == "flowers":
+        CLASS_DIM = 102
+        DATA_DIM = [3, 224, 224]
 
     # PaddlePaddle init
     paddle.init(use_gpu=args.device == 'GPU', trainer_count=1)
@@ -100,11 +112,13 @@ def main():
     #                                                  args.batch_size),)
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            flowers.train(),
+            paddle.dataset.cifar.train10()
+            if args.data_set == 'cifar10' else paddle.dataset.flowers.train(),
             buf_size=5120),
         batch_size=args.batch_size)
     test_reader = paddle.batch(
-        flowers.valid(),
+        paddle.dataset.cifar.test10()
+        if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
         batch_size=args.batch_size)
 
     # Create trainer
