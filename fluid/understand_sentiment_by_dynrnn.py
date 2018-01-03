@@ -1,13 +1,12 @@
-import paddle.v2.fluid as fluid
-import paddle.v2.dataset.imdb as imdb
-import paddle.v2.reader as reader
-from paddle.v2 import batch
-import os
 import argparse
 import cPickle
-import numpy
-import copy
+import os
 import random
+
+import numpy
+import paddle.v2.dataset.imdb as imdb
+import paddle.v2.fluid as fluid
+from paddle.v2 import batch
 
 try:
     with open('word_dict.pkl', 'r') as f:
@@ -18,14 +17,17 @@ except:
         cPickle.dump(word_dict, f, cPickle.HIGHEST_PROTOCOL)
 
 
-def cache_reader(reader):
+def cache_reader(reader, clean):
     print 'Reading data to memory'
+    fn = 'data.pkl'
+    if clean:
+        os.remove(fn)
     try:
-        with open('data.pkl', 'r') as f:
+        with open(fn, 'r') as f:
             items = cPickle.load(f)
     except:
         items = list(reader())
-        with open('data.pkl', 'w') as f:
+        with open(fn, 'w') as f:
             cPickle.dump(items, f, cPickle.HIGHEST_PROTOCOL)
 
     print 'Done. data size %d' % len(items)
@@ -54,15 +56,15 @@ def main():
     args = parse_args()
     data = fluid.layers.data(
         name="words", shape=[1], lod_level=1, dtype='int64')
-    clip_grad = fluid.ParamAttr(clip=fluid.clip.GradientClipByValue(1.0))
     sentence = fluid.layers.embedding(
-        input=data,
-        size=[len(word_dict), args.emb_dim],
-        param_attr=copy.deepcopy(clip_grad))
+        input=data, size=[len(word_dict), args.emb_dim])
+
+    sentence = fluid.layers.fc(input=sentence, size=200, act='tanh')
+
     rnn = fluid.layers.DynamicRNN()
     with rnn.block():
         word = rnn.step_input(sentence)
-        lstm_size = 16
+        lstm_size = 32
         prev_hidden = rnn.memory(value=0.0, shape=[lstm_size])
         prev_cell = rnn.memory(value=0.0, shape=[lstm_size])
 
@@ -91,7 +93,7 @@ def main():
         ])
 
         hidden = fluid.layers.elementwise_mul(
-            x=output_gate, y=fluid.layers.sigmoid(x=cell))
+            x=output_gate, y=fluid.layers.tanh(x=cell))
 
         rnn.update_memory(prev_cell, cell)
         rnn.update_memory(prev_hidden, hidden)
@@ -113,7 +115,8 @@ def main():
     exe.run(fluid.default_startup_program())
 
     def train_loop(pass_num, crop_size):
-        cache = cache_reader(crop_sentence(imdb.train(word_dict), crop_size))
+        cache = cache_reader(
+            crop_sentence(imdb.train(word_dict), crop_size), clean=args.clean)
         for pass_id in range(pass_num):
             train_reader = batch(cache, batch_size=args.batch_size)
             for batch_id, data in enumerate(train_reader()):
@@ -135,7 +138,7 @@ def parse_args():
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=int(os.environ.get('BATCH_SIZE', '32')),
+        default=int(os.environ.get('BATCH_SIZE', '64')),
         help='The minibatch size.')
     parser.add_argument(
         '--emb_dim',
@@ -156,9 +159,14 @@ def parse_args():
     parser.add_argument(
         '--crop_size',
         type=int,
-        default=int(os.environ.get('CROP_SIZE', '35')),
+        default=int(os.environ.get('CROP_SIZE', '1500')),
         help='The max sentence length of input. Since this model use plain RNN,'
         ' Gradient could be explored if sentence is too long')
+    parser.add_argument(
+        '--clean',
+        type=bool,
+        default=bool(os.environ.get('CLEAN', 'False')),
+        help='clean the cached pickle file.')
     args = parser.parse_args()
     return args
 
