@@ -21,7 +21,10 @@ def cache_reader(reader, clean):
     print 'Reading data to memory'
     fn = 'data.pkl'
     if clean:
-        os.remove(fn)
+        try:
+            os.remove(fn)
+        except:
+            pass
     try:
         with open(fn, 'r') as f:
             items = cPickle.load(f)
