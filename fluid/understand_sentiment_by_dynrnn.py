@@ -168,7 +168,7 @@ def parse_args():
     parser.add_argument(
         '--clean',
         type=bool,
-        default=bool(os.environ.get('CLEAN', 'False')),
+        default=os.environ.get('CLEAN', 'False').lower() != 'false',
         help='clean the cached pickle file.')
     args = parser.parse_args()
     return args
