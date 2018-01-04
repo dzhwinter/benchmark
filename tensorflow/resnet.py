@@ -1,9 +1,9 @@
 """
 based on https://github.com/tensorflow/models/blob/master/official/resnet/resnet_model.py
 
-Get help: python reset.py --help
-See performance on flowers: python reset.py
-Train on cifar10: python reset.py --data=cifar10 --with_test
+Get help: python resnet.py --help
+See performance on flowers: python resnet.py
+Train on cifar10: python resnet.py --data=cifar10 --with_test
 """
 
 from __future__ import absolute_import
@@ -390,6 +390,22 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
         if args.data == 'cifar10' else paddle.dataset.flowers.test(),
         batch_size=100)
 
+    def test():
+        test_accs = []
+        for batch_id, data in enumerate(test_reader()):
+            test_images = np.array(
+                map(lambda x: np.transpose(x[0].reshape(pdshape),
+                axes=[1, 2, 0]), data)).astype("float32")
+            test_labels = np.array(map(lambda x: x[1], data)).astype('int64')
+            test_accs.append(
+                accuracy.eval(feed_dict={
+                    images: test_images,
+                    labels: test_labels,
+                    is_training: False
+                }))
+        print("Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n" %
+              (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
+
     with tf.Session() as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
@@ -439,23 +455,7 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
 
             # evaluation
             if args.with_test:
-                test_accs = []
-                for batch_id, data in enumerate(test_reader()):
-                    test_images = np.array(
-                        map(lambda x: np.transpose(x[0].reshape(pdshape),
-                        axes=[1, 2, 0]), data)).astype("float32")
-                    test_labels = np.array(map(lambda x: x[1], data)).astype(
-                        'int64')
-                    test_accs.append(
-                        accuracy.eval(feed_dict={
-                            images: test_images,
-                            labels: test_labels,
-                            is_training: False
-                        }))
-                print(
-                    "Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n"
-                    %
-                    (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
+                test()
 
         if not args.with_test:
             duration = time.time() - start_time
