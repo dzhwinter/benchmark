@@ -122,6 +122,8 @@ def conv2d_fixed_padding(inputs, filters, kernel_size, strides, data_format):
     # The padding is consistent and is based only on `kernel_size`, not on the
     # dimensions of `inputs` (as opposed to using `tf.layers.conv2d` alone).
     # This is consistent with PaddlePaddle.
+    # In addition, the calculation for output size in TensorFlow can refer: 
+    # https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/framework/common_shape_fns.cc
     if strides > 1:
         inputs = fixed_padding(inputs, kernel_size, data_format)
 
