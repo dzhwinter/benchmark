@@ -8,6 +8,7 @@ import time
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
 
 
@@ -40,13 +41,15 @@ def parse_args():
         '--use_cprof', action='store_true', help='If set, use cProfile.')
     parser.add_argument(
         '--use_nvprof',
-        action='store_false',
+        action='store_true',
         help='If set, use nvprof for CUDA.')
     args = parser.parse_args()
     return args
 
 
 def print_arguments(args):
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
@@ -117,18 +120,18 @@ def run_benchmark(model, args):
         paddle.reader.shuffle(
             paddle.dataset.imdb.train(word_dict), buf_size=25000),
         batch_size=args.batch_size)
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
     iterator = 0
     for pass_id in xrange(args.pass_num):
         accuracy.reset(exe)
-        for data in train_reader():
+        for batch_id, data in enumerate(train_reader()):
             tensor_words = to_lodtensor(map(lambda x: x[0], data), place)
 
             label = np.array(map(lambda x: x[1], data)).astype("int64")
-            label = label.reshape([len(data), 1])
+            label = label.reshape([-1, 1])
 
             tensor_label = fluid.LoDTensor()
             tensor_label.set(label, place)
@@ -140,10 +143,12 @@ def run_benchmark(model, args):
                 fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
 
-            iterator += 1
-            print("pass_id:%d, Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (pass_id, iterator, str(loss), str(acc), str(pass_acc)))
+            print(
+                "pass_id:%d, batch_id:%d, Iter: %d, loss: %s, acc: %s, pass_acc: %s"
+                % (pass_id, batch_id, iterator, str(loss), str(acc),
+                   str(pass_acc)))
 
+            iterator += 1
             if iterator == args.iterations:
                 return
 

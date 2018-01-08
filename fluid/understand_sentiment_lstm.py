@@ -8,7 +8,9 @@ import time
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
+from paddle.v2.fluid.layer_helper import LayerHelper
 
 
 def parse_args():
@@ -40,17 +42,51 @@ def parse_args():
         '--use_cprof', action='store_true', help='If set, use cProfile.')
     parser.add_argument(
         '--use_nvprof',
-        action='store_false',
+        action='store_true',
         help='If set, use nvprof for CUDA.')
     args = parser.parse_args()
     return args
 
 
 def print_arguments(args):
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
+
+
+def lstm(x, c_pre_init, hidden_dim, forget_bias=None):
+    """
+    This function helps create an operator for the LSTM (Long Short Term
+    Memory) cell that can be used inside an RNN.
+    """
+    helper = LayerHelper('lstm_unit', **locals())
+    rnn = fluid.layers.StaticRNN()
+    with rnn.step():
+        c_pre = rnn.memory(init=c_pre_init)
+        x_t = rnn.step_input(x)
+
+        before_fc = fluid.layers.concat(input=[x_t, c_pre], axis=1)
+        after_fc = fluid.layers.fc(input=before_fc, size=hidden_dim * 4)
+
+        dtype = x.dtype
+        c = helper.create_tmp_variable(dtype)
+        h = helper.create_tmp_variable(dtype)
+
+        helper.append_op(
+            type='lstm_unit',
+            inputs={"X": after_fc,
+                    "C_prev": c_pre},
+            outputs={"C": c,
+                     "H": h},
+            attrs={"forget_bias": forget_bias})
+
+        rnn.update_memory(c_pre, c)
+        rnn.output(h)
+
+    return rnn()
 
 
 def lstm_model(data, dict_dim, class_dim=2):
@@ -63,19 +99,15 @@ def lstm_model(data, dict_dim, class_dim=2):
     emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, emb_dim])
     emb = fluid.layers.transpose(x=emb, axis=[1, 0, 2])
 
-    layer_1_out = emb
-    for i in range(stacked_num):
-        c_pre_init = fluid.layers.fill_constant(
-            dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
-        c_pre_init.stop_gradient = False
-        layer_1_out = fluid.layers.lstm(
-            layer_1_out, c_pre_init=c_pre_init, hidden_dim=emb_dim)
-
+    c_pre_init = fluid.layers.fill_constant(
+        dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
+    c_pre_init.stop_gradient = False
+    layer_1_out = lstm(emb, c_pre_init=c_pre_init, hidden_dim=emb_dim)
     layer_1_out = fluid.layers.transpose(x=layer_1_out, axis=[1, 0, 2])
+
     prediction = fluid.layers.fc(input=layer_1_out,
                                  size=class_dim,
                                  act="softmax")
-
     return prediction
 
 
@@ -104,7 +136,7 @@ def prepare_feed_data(data, place):
     tensor_words = to_lodtensor(map(lambda x: x[0], data), place)
 
     label = np.array(map(lambda x: x[1], data)).astype("int64")
-    label = label.reshape([len(label), 1])
+    label = label.reshape([-1, 1])
     tensor_label = fluid.LoDTensor()
     tensor_label.set(label, place)
 
@@ -119,7 +151,7 @@ def run_benchmark(model, args):
     word_dict = paddle.dataset.imdb.word_dict()
 
     print("load word dict successfully")
-    
+
     dict_dim = len(word_dict)
     data = fluid.layers.data(
         name="words",
@@ -144,18 +176,16 @@ def run_benchmark(model, args):
             paddle.dataset.imdb.train(word_dict),
             buf_size=25000),  # only for speed
         batch_size=args.batch_size)
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
-    
-    iterator = 0
+    iters = 0
     for pass_id in xrange(args.pass_num):
         accuracy.reset(exe)
-        for data in train_reader():
+        for batch_id, data in enumerate(train_reader()):
+
             chopped_data = chop_data(
                 data, chop_len=args.seq_len, batch_size=args.batch_size)
-            if len(data) < args.batch_size : continue
-
             tensor_words, tensor_label = prepare_feed_data(chopped_data, place)
 
             loss, acc = exe.run(
@@ -164,12 +194,12 @@ def run_benchmark(model, args):
                       "label": tensor_label},
                 fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
-            
-            iterator += 1
-            print("pass_id:%d, Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (pass_id, iterator, str(loss), str(acc), str(pass_acc)))
 
-            if iterator == args.iterations:
+            print("pass=%d, batch=%d, iters=%d ,loss=%f, acc=%f, pass_acc=%f" %
+                  (pass_id, batch_id, iters, loss, acc, pass_acc))
+
+            iters += 1
+            if iters == args.iterations:
                 return
 
 
