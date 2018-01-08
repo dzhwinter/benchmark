@@ -70,10 +70,16 @@ def vgg16_bn_drop(input):
 def main():
     if args.data_set == "cifar10":
         classdim = 10
-        data_shape = [3, 32, 32]
+        if args.data_format == 'NCHW':
+            data_shape = [3, 32, 32]
+        else:
+            data_shape = [32, 32, 3]
     else:
         classdim = 102
-        data_shape = [3, 224, 224]
+        if args.data_format == 'NCHW':
+            data_shape = [3, 224, 224]
+        else:
+            data_shape = [224, 224, 3]
 
     images = fluid.layers.data(name='pixel', shape=data_shape, dtype='float32')
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')

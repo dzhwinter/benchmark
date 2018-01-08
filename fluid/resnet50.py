@@ -40,17 +40,23 @@ def parse_args():
     parser.add_argument(
         '--pass_num', type=int, default=100, help='The number of passes.')
     parser.add_argument(
-        '--order',
+        '--data_format',
         type=str,
         default='NCHW',
         choices=['NCHW', 'NHWC'],
-        help='The data order, now only support NCHW.')
+        help='The data data_format, now only support NCHW.')
     parser.add_argument(
         '--device',
         type=str,
         default='GPU',
         choices=['CPU', 'GPU'],
         help='The device type.')
+    parser.add_argument(
+        '--data_set',
+        type=str,
+        default='cifar10',
+        choices=['cifar10', 'flowers'],
+        help='Optional dataset for benchmark.')
     parser.add_argument(
         '--infer_only', action='store_true', help='If set, run forward only.')
     parser.add_argument(
@@ -72,7 +78,7 @@ def print_arguments(args):
     print('------------------------------------------------')
 
 
-def resnet(input, class_dim, depth=50, order='NCHW'):
+def resnet(input, class_dim, depth=50, data_format='NCHW'):
     def conv_bn_layer(input, ch_out, filter_size, stride, padding, act='relu'):
         tmp = fluid.layers.conv2d(
             input=input,
@@ -85,7 +91,7 @@ def resnet(input, class_dim, depth=50, order='NCHW'):
         return fluid.layers.batch_norm(input=tmp, act=act)
 
     def shortcut(input, ch_out, stride):
-        ch_in = input.shape[1] if order == 'NCHW' else input.shape[-1]
+        ch_in = input.shape[1] if data_format == 'NCHW' else input.shape[-1]
         if ch_in != ch_out:
             return conv_bn_layer(input, ch_out, 1, stride, 0, None)
         else:
@@ -141,8 +147,19 @@ def run_benchmark(model, args):
         pr.enable()
     start_time = time.time()
 
-    class_dim = 102
-    dshape = [3, 224, 224] if args.order == 'NCHW' else [224, 224, 3]
+    if args.data_set == "cifar10":
+        class_dim = 10
+        if args.data_format == 'NCHW':
+            dshape = [3, 32, 32]
+        else:
+            dshape = [32, 32, 3]
+    else:
+        class_dim = 102
+        if args.data_format == 'NCHW':
+            dshape = [3, 224, 224]
+        else:
+            dshape = [224, 224, 3]
+
     input = fluid.layers.data(name='data', shape=dshape, dtype='float32')
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
     predict = model(input, class_dim)
@@ -154,7 +171,8 @@ def run_benchmark(model, args):
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.flowers.train(), buf_size=5120),
+            paddle.dataset.cifar.train10() if args.data_set == 'cifar10' else paddle.dataset.flowers.train(),
+            buf_size=5120),
         batch_size=args.batch_size)
 
     place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
@@ -216,8 +234,8 @@ if __name__ == '__main__':
     model_map = {'resnet': resnet, }
     args = parse_args()
     print_arguments(args)
-    if args.order == 'NHWC':
-        raise ValueError('Only support NCHW order now.')
+    if args.data_format == 'NHWC':
+        raise ValueError('Only support NCHW data_format now.')
     if args.use_nvprof and args.device == 'GPU':
         with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
             run_benchmark(model_map[args.model], args)
