@@ -10,6 +10,7 @@ import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
 import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
+from paddle.v2.fluid.layer_helper import LayerHelper
 
 
 def parse_args():
@@ -56,6 +57,38 @@ def print_arguments(args):
     print('------------------------------------------------')
 
 
+def lstm(x, c_pre_init, hidden_dim, forget_bias=None):
+    """
+    This function helps create an operator for the LSTM (Long Short Term
+    Memory) cell that can be used inside an RNN.
+    """
+    helper = LayerHelper('lstm_unit', **locals())
+    rnn = fluid.layers.StaticRNN()
+    with rnn.step():
+        c_pre = rnn.memory(init=c_pre_init)
+        x_t = rnn.step_input(x)
+
+        before_fc = fluid.layers.concat(input=[x_t, c_pre], axis=1)
+        after_fc = fluid.layers.fc(input=before_fc, size=hidden_dim * 4)
+
+        dtype = x.dtype
+        c = helper.create_tmp_variable(dtype)
+        h = helper.create_tmp_variable(dtype)
+
+        helper.append_op(
+            type='lstm_unit',
+            inputs={"X": after_fc,
+                    "C_prev": c_pre},
+            outputs={"C": c,
+                     "H": h},
+            attrs={"forget_bias": forget_bias})
+
+        rnn.update_memory(c_pre, c)
+        rnn.output(h)
+
+    return rnn()
+
+
 def lstm_model(data, dict_dim, class_dim=2):
     batch_size = args.batch_size
     emb_dim = args.emb_dim
@@ -66,19 +99,15 @@ def lstm_model(data, dict_dim, class_dim=2):
     emb = fluid.layers.reshape(x=emb, shape=[batch_size, seq_len, emb_dim])
     emb = fluid.layers.transpose(x=emb, axis=[1, 0, 2])
 
-    layer_1_out = emb
-    for i in range(stacked_num):
-        c_pre_init = fluid.layers.fill_constant(
-            dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
-        c_pre_init.stop_gradient = False
-        layer_1_out = fluid.layers.lstm(
-            layer_1_out, c_pre_init=c_pre_init, hidden_dim=emb_dim)
-
+    c_pre_init = fluid.layers.fill_constant(
+        dtype=emb.dtype, shape=[batch_size, emb_dim], value=0.0)
+    c_pre_init.stop_gradient = False
+    layer_1_out = lstm(emb, c_pre_init=c_pre_init, hidden_dim=emb_dim)
     layer_1_out = fluid.layers.transpose(x=layer_1_out, axis=[1, 0, 2])
+
     prediction = fluid.layers.fc(input=layer_1_out,
                                  size=class_dim,
                                  act="softmax")
-
     return prediction
 
 
@@ -107,7 +136,7 @@ def prepare_feed_data(data, place):
     tensor_words = to_lodtensor(map(lambda x: x[0], data), place)
 
     label = np.array(map(lambda x: x[1], data)).astype("int64")
-    label = label.reshape([len(label), 1])
+    label = label.reshape([-1, 1])
     tensor_label = fluid.LoDTensor()
     tensor_label.set(label, place)
 
@@ -150,11 +179,11 @@ def run_benchmark(model, args):
     place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
-    for it, pass_id in enumerate(xrange(args.pass_num)):
+    iters = 0
+    for pass_id in xrange(args.pass_num):
         accuracy.reset(exe)
-        if it == args.iterations:
-            break
         for batch_id, data in enumerate(train_reader()):
+
             chopped_data = chop_data(
                 data, chop_len=args.seq_len, batch_size=args.batch_size)
             tensor_words, tensor_label = prepare_feed_data(chopped_data, place)
@@ -165,8 +194,13 @@ def run_benchmark(model, args):
                       "label": tensor_label},
                 fetch_list=[avg_cost] + accuracy.metrics)
             pass_acc = accuracy.eval(exe)
-            print("pass=%d, batch=%d, loss=%f, acc=%f, pass_acc=%f" %
-                  (it, batch_id, loss, acc, pass_acc))
+
+            print("pass=%d, batch=%d, iters=%d ,loss=%f, acc=%f, pass_acc=%f" %
+                  (pass_id, batch_id, iters, loss, acc, pass_acc))
+
+            iters += 1
+            if iters == args.iterations:
+                return
 
 
 if __name__ == '__main__':
