@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument(
         '--data_set',
         type=str,
-        default='cifar10',
+        default='flowers',
         choices=['cifar10', 'flowers'],
         help='Optional dataset for benchmark.')
     parser.add_argument(
