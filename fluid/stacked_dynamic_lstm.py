@@ -2,6 +2,7 @@ import argparse
 import cPickle
 import os
 import random
+import time
 
 import numpy
 import paddle.v2.dataset.imdb as imdb
@@ -122,6 +123,8 @@ def main():
             crop_sentence(imdb.train(word_dict), crop_size), clean=args.clean)
         for pass_id in range(pass_num):
             train_reader = batch(cache, batch_size=args.batch_size)
+
+            pass_start_time = time.time()
             for batch_id, data in enumerate(train_reader()):
                 tensor_words = to_lodtensor([x[0] for x in data], place)
                 label = numpy.array([x[1] for x in data]).astype("int64")
@@ -131,7 +134,10 @@ def main():
                                         "label": label},
                                   fetch_list=[loss])[0]
                 print 'Pass', pass_id, 'Batch', batch_id, 'loss', loss_np
-            print 'Pass', pass_id, 'Done'
+
+            pass_end_time = time.time()
+            time_consumed = pass_end_time - pass_start_time
+            print("pass_id=%d, sec/pass: %f" % (pass_id, time_consumed))
 
     train_loop(args.pass_num, args.crop_size)
 
