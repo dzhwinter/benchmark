@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument(
         '--model',
         type=str,
-        choices=['resnet'],
+        choices=['resnet', 'resnet_cifar10'],
         default='resnet',
         help='The model architecture.')
     parser.add_argument(
@@ -77,44 +77,44 @@ def print_arguments(args):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
 
+def conv_bn_layer(input, ch_out, filter_size, stride, padding, act='relu'):
+    tmp = fluid.layers.conv2d(
+        input=input,
+        filter_size=filter_size,
+        num_filters=ch_out,
+        stride=stride,
+        padding=padding,
+        act=None,
+        bias_attr=False)
+    return fluid.layers.batch_norm(input=tmp, act=act)
+
+def shortcut(input, ch_out, stride):
+    ch_in = input.shape[1] if args.data_format == 'NCHW' else input.shape[-1]
+    if ch_in != ch_out:
+        return conv_bn_layer(input, ch_out, 1, stride, 0, None)
+    else:
+        return input
+
+def basicblock(input, ch_out, stride):
+    short = shortcut(input, ch_out, stride)
+    conv1 = conv_bn_layer(input, ch_out, 3, stride, 1)
+    conv2 = conv_bn_layer(conv1, ch_out, 3, 1, 1, act=None)
+    return fluid.layers.elementwise_add(x=short, y=conv2, act='relu')
+
+def bottleneck(input, ch_out, stride):
+    short = shortcut(input, ch_out * 4, stride)
+    conv1 = conv_bn_layer(input, ch_out, 1, stride, 0)
+    conv2 = conv_bn_layer(conv1, ch_out, 3, 1, 1)
+    conv3 = conv_bn_layer(conv2, ch_out * 4, 1, 1, 0, act=None)
+    return fluid.layers.elementwise_add(x=short, y=conv3, act='relu')
+
+def layer_warp(block_func, input, ch_out, count, stride):
+    res_out = block_func(input, ch_out, stride)
+    for i in range(1, count):
+        res_out = block_func(res_out, ch_out, 1)
+    return res_out
 
 def resnet(input, class_dim, depth=50, data_format='NCHW'):
-    def conv_bn_layer(input, ch_out, filter_size, stride, padding, act='relu'):
-        tmp = fluid.layers.conv2d(
-            input=input,
-            filter_size=filter_size,
-            num_filters=ch_out,
-            stride=stride,
-            padding=padding,
-            act=None,
-            bias_attr=False)
-        return fluid.layers.batch_norm(input=tmp, act=act)
-
-    def shortcut(input, ch_out, stride):
-        ch_in = input.shape[1] if data_format == 'NCHW' else input.shape[-1]
-        if ch_in != ch_out:
-            return conv_bn_layer(input, ch_out, 1, stride, 0, None)
-        else:
-            return input
-
-    def basicblock(input, ch_out, stride):
-        short = shortcut(input, ch_out, stride)
-        conv1 = conv_bn_layer(input, ch_out, 3, stride, 1)
-        conv2 = conv_bn_layer(conv1, ch_out, 3, 1, 1, act=None)
-        return fluid.layers.elementwise_add(x=short, y=conv2, act='relu')
-
-    def bottleneck(input, ch_out, stride):
-        short = shortcut(input, ch_out * 4, stride)
-        conv1 = conv_bn_layer(input, ch_out, 1, stride, 0)
-        conv2 = conv_bn_layer(conv1, ch_out, 3, 1, 1)
-        conv3 = conv_bn_layer(conv2, ch_out * 4, 1, 1, 0, act=None)
-        return fluid.layers.elementwise_add(x=short, y=conv3, act='relu')
-
-    def layer_warp(block_func, input, ch_out, count, stride):
-        res_out = block_func(input, ch_out, stride)
-        for i in range(1, count):
-            res_out = block_func(res_out, ch_out, 1)
-        return res_out
 
     cfg = {
         18: ([2, 2, 2, 1], basicblock),
@@ -140,6 +140,20 @@ def resnet(input, class_dim, depth=50, data_format='NCHW'):
     out = fluid.layers.fc(input=pool2, size=class_dim, act='softmax')
     return out
 
+def resnet_cifar10(input, class_dim, depth=32, data_format='NCHW'):
+    assert (depth - 2) % 6 == 0
+
+    n = (depth - 2) // 6
+
+    conv1 = conv_bn_layer(
+        input=input, ch_out=16, filter_size=3, stride=1, padding=1)
+    res1 = layer_warp(basicblock, conv1, 16, n, 1)
+    res2 = layer_warp(basicblock, res1, 32, n, 2)
+    res3 = layer_warp(basicblock, res2, 64, n, 2)
+    pool = fluid.layers.pool2d(
+        input=res3, pool_size=8, pool_type='avg', pool_stride=1)
+    out = fluid.layers.fc(input=pool, size=class_dim, act='softmax')
+    return out
 
 def run_benchmark(model, args):
     if args.use_cprof:
@@ -231,7 +245,7 @@ def run_benchmark(model, args):
 
 
 if __name__ == '__main__':
-    model_map = {'resnet': resnet, }
+    model_map = {'resnet': resnet, 'resnet_cifar10' : resnet_cifar10 }
     args = parse_args()
     print_arguments(args)
     if args.data_format == 'NHWC':
