@@ -250,7 +250,9 @@ def run_benchmark():
                 }))
         return np.mean(test_accs)
 
-    with tf.Session() as sess:
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True if args.device == 'CPU' else False
+    with tf.Session(config=config) as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
         sess.run(init_g)
