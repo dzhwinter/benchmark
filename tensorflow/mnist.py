@@ -129,21 +129,21 @@ with tf.Session(config=config) as sess:
     sess.run(init_g)
     sess.run(init_l)
     for pass_id in range(PASS_NUM):
-        pass_start = time.clock()
+        pass_start = time.time()
         for batch_id, data in enumerate(train_reader()):
             images_data = np.array(
                 map(lambda x: np.transpose(x[0].reshape([1, 28, 28]), axes=[1,2,0]), data)).astype("float32")
             labels_data = np.array(map(lambda x: x[1], data)).astype("int64")
-            start = time.clock()
+            start = time.time()
             _, loss, acc, g_acc = sess.run(
                 [train_op, avg_cost, accuracy, g_accuracy],
                 feed_dict={images: images_data,
                            labels: labels_data})
-            end = time.clock()
+            end = time.time()
 
             print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
-        pass_end = time.clock()
+        pass_end = time.time()
         test_avg_acc = eval_test()
         print("pass=%d, training_avg_accuracy=%f, test_avg_acc=%f, elapse=%f" %
               (pass_id, g_acc[1], test_avg_acc, (pass_end - pass_start) / 1000))
