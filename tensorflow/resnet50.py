@@ -406,7 +406,9 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
         print("Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n" %
               (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
 
-    with tf.Session() as sess:
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True if args.device == 'CPU' else False
+    with tf.Session(config=config) as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
         sess.run(init_g)
@@ -471,17 +473,15 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
 if __name__ == '__main__':
     args = parse_args()
     print_arguments(args)
-    if tf.test.is_built_with_cuda():
-        device = '/device:GPU:0'
-        if args.order == 'NHWC':
-            data_format = 'channels_last'
-        else:
-            data_format = 'channels_first'
-    else:
-        device = '/cpu:0'
-        if args.order == 'NHWC':
-            data_format = 'channels_last'
-        else:
-            raise ValueError('Only support NHWC order in CPU mode')
+    if args.device == 'GPU' and not tf.test.is_built_with_cuda():
+        raise ValueError(
+            'This version of tf only can run on cpu. Please install tensorflow_gpu or build tensorflow with cuda.'
+        )
+
+    device = '/cpu:0' if args.device == 'CPU' else '/device:GPU:0'
+    data_format = 'channels_last' if args.order == 'NHWC' else 'channels_first'
+
+    if args.device == 'CPU' and args.order == 'NCHW':
+        raise ValueError('Only support NHWC order in CPU mode')
 
     run_benchmark(args, data_format, device)
