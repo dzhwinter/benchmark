@@ -83,15 +83,6 @@ def dynamic_lstm_model(dict_size,
 
     sentence = fluid.layers.fc(input=embedding, size=hidden_dim * 4, bias_attr=True)
 
-    # input = embedding
-    # for i in range(stacked_num):
-    #     fc = fluid.layers.fc(input=input, size=hidden_dim * 4, bias_attr=True)
-    #     hidden, cell = fluid.layers.dynamic_lstm(
-    #         input=fc, size=hidden_dim * 4, use_peepholes=False)
-    #     input = hidden
-
-    # lstm_out = fluid.layers.sequence_pool(input=input, pool_type='max')
-    # prediction = fluid.layers.fc(input=lstm_out, size=class_num, act='softmax')
     rnn = fluid.layers.DynamicRNN()
     with rnn.block():
         word = rnn.step_input(sentence)
