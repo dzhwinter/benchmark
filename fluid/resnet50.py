@@ -170,12 +170,16 @@ def run_benchmark(model, args):
 
     iter = 0
     im_num = 0
+    start_time = time.time()
     for pass_id in range(args.pass_num):
         accuracy.reset(exe)
         if iter == args.iterations:
-            break
+            iter = 0
         for batch_id, data in enumerate(train_reader()):
-            if iter == args.skip_batch_num:
+            if iter < args.skip_batch_num:
+                iter += 1
+                continue
+            if pass_id == 0:
                 start_time = time.time()
             if iter == args.iterations:
                 break
@@ -195,9 +199,9 @@ def run_benchmark(model, args):
             im_num += label.shape[0]
 
     duration = time.time() - start_time
-    im_num = im_num - args.skip_batch_num * args.batch_size
+    #im_num = im_num - args.skip_batch_num * args.batch_size
     examples_per_sec = im_num / duration
-    sec_per_batch = duration / (iter - args.skip_batch_num)
+    sec_per_batch = duration / (iter - args.skip_batch_num) / args.pass_num
 
     print('\nTotal examples: %d, total time: %.5f' % (im_num, duration))
     print('%.5f examples/sec, %.5f sec/batch \n' %
