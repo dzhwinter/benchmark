@@ -12,7 +12,7 @@ import functools
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
-    '--batch_size', type=int, default=32, help="Batch size for training.")
+    '--batch_size', type=int, default=128, help="Batch size for training.")
 parser.add_argument(
     '--learning_rate',
     type=float,

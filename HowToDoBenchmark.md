@@ -38,7 +38,7 @@ docker pull tensorflow/tensorflow:1.4.0-gpu
 
 首先需要屏蔽GPU `export CUDA_VISIBLE_DEVICES=`;
 
-Fluid需要关闭OpenMP. 设置`export OMP_NUM_THREADS=1`. 设置Device=CPU, 或者在代码中设置CPUPlace().
+在单机单卡的测试环境中,Fluid需要关闭OpenMP. 设置`export OMP_NUM_THREADS=1`. 设置Device=CPU, 或者在代码中设置CPUPlace().
 TensorFlow需要关闭多线程, 设置 intra_op_parallelism_threads=1, inter_op_parallelism_threads=1.
 运行过程中可以通过, `nvidia-smi`来校验是否有GPU被使用, 下文GPU同理.
 

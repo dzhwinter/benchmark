@@ -8,6 +8,7 @@ import time
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
 
 SEED = 1
@@ -122,32 +123,32 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.dataset.mnist.train(), batch_size=args.batch_size)
 
-    place = fluid.CPUPlace()
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
 
     exe.run(fluid.default_startup_program())
 
     for pass_id in range(args.pass_num):
         accuracy.reset(exe)
-        pass_start = time.clock()
+        pass_start = time.time()
         for batch_id, data in enumerate(train_reader()):
             img_data = np.array(
                 map(lambda x: x[0].reshape([1, 28, 28]), data)).astype(DTYPE)
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([len(y_data), 1])
 
-            start = time.clock()
+            start = time.time()
             outs = exe.run(fluid.default_main_program(),
                            feed={"pixel": img_data,
                                  "label": y_data},
                            fetch_list=[avg_cost] + accuracy.metrics)
-            end = time.clock()
+            end = time.time()
             loss = np.array(outs[0])
             acc = np.array(outs[1])
             print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
-        pass_end = time.clock()
+        pass_end = time.time()
         test_avg_acc = eval_test(exe, accuracy, avg_cost)
         pass_acc = accuracy.eval(exe)
         print("pass=%d, test_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
