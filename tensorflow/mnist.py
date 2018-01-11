@@ -38,8 +38,9 @@ def paddle_random_normal(shape, loc=.0, scale=1., seed=1, dtype="float32"):
     out = exe.run(program, fetch_list=[w])
     return np.array(out[0])
 
-
-train_reader = paddle.batch(paddle.dataset.mnist.train(), batch_size=BATCH_SIZE)
+train_reader=paddle.batch(
+      paddle.reader.shuffle(paddle.dataset.mnist.train(), buf_size=8192),
+      batch_size=BATCH_SIZE)
 images = tf.placeholder(DTYPE, shape=(None, 28, 28, 1))
 labels = tf.placeholder(tf.int64, shape=(None, ))
 
