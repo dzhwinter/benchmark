@@ -42,10 +42,10 @@ def run_benchmark(args):
 
     device = '/cpu:0' if args.device == 'CPU' else '/device:GPU:0'
     with tf.device(device):
-
         images = tf.placeholder(DTYPE, shape=(None, 28, 28, 1))
         labels = tf.placeholder(tf.int64, shape=(None, ))
 
+        # conv1, relu, pool1
         conv1_weights = weight_variable(DTYPE, [5, 5, 1, 20])
         conv1_bias = bias_variable(DTYPE, [20])
         conv1 = tf.nn.conv2d(
@@ -54,6 +54,7 @@ def run_benchmark(args):
         pool1 = tf.nn.max_pool(
             relu1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="VALID")
 
+        # conv2, relu, pool2
         conv2_weights = weight_variable(DTYPE, [5, 5, 20, 50])
         conv2_bias = bias_variable(DTYPE, [50])
         conv2 = tf.nn.conv2d(
@@ -62,23 +63,36 @@ def run_benchmark(args):
         pool2 = tf.nn.max_pool(
             relu2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="VALID")
 
+        # FC 
         pool_shape = pool2.get_shape().as_list()
         hidden_dim = reduce(lambda a, b: a * b, pool_shape[1:], 1)
         reshape = tf.reshape(pool2, shape=(tf.shape(pool2)[0], hidden_dim))
-
         fc_weights = weight_variable(DTYPE, [hidden_dim, 10])
         fc_bias = bias_variable(DTYPE, [10])
         logits = tf.matmul(reshape, fc_weights) + fc_bias
+
+        # Get prediction
         prediction = tf.nn.softmax(logits)
 
+        # Loss 
         one_hot_labels = tf.one_hot(labels, depth=10)
         cost = -tf.reduce_sum(tf.log(prediction) * one_hot_labels, [1])
         avg_cost = tf.reduce_mean(cost)
 
+        # Get accuracy
         correct = tf.equal(tf.argmax(prediction, 1), labels)
         accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
-        g_accuracy = tf.metrics.accuracy(labels, tf.argmax(prediction, axis=1))
 
+        # metrics, g_accuracy
+        with tf.variable_scope("reset_metrics_accuracy_scope") as scope:
+            g_accuracy = tf.metrics.accuracy(
+                labels, tf.argmax(
+                    prediction, axis=1))
+            vars = tf.contrib.framework.get_variables(
+                scope, collection=tf.GraphKeys.LOCAL_VARIABLES)
+            g_accuracy_reset_op = tf.variables_initializer(vars)
+
+        # Optimizer 
         opt = tf.train.AdamOptimizer(
             learning_rate=0.001, beta1=0.9, beta2=0.999)
         train_op = opt.minimize(avg_cost)
@@ -90,6 +104,7 @@ def run_benchmark(args):
         paddle.dataset.mnist.test(), batch_size=args.batch_size)
 
     def eval_test():
+        sess.run(g_accuracy_reset_op)
         for batch_id, data in enumerate(test_reader()):
             images_data = np.array(
                 map(lambda x: np.transpose(x[0].reshape([1, 28, 28]), axes=[1,2,0]), data)).astype("float32")
@@ -109,12 +124,15 @@ def run_benchmark(args):
         sess.run(init_g)
         sess.run(init_l)
         for pass_id in range(args.pass_num):
+            sess.run(g_accuracy_reset_op)
+
             pass_start = time.time()
             for batch_id, data in enumerate(train_reader()):
                 images_data = np.array(
                     map(lambda x: np.transpose(x[0].reshape([1, 28, 28]), axes=[1,2,0]), data)).astype("float32")
                 labels_data = np.array(map(lambda x: x[1], data)).astype(
                     "int64")
+
                 start = time.time()
                 _, loss, acc, g_acc = sess.run(
                     [train_op, avg_cost, accuracy, g_accuracy],
@@ -124,8 +142,10 @@ def run_benchmark(args):
 
                 print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
                       (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
+
             pass_end = time.time()
             test_avg_acc = eval_test()
+
             print(
                 "pass=%d, training_avg_accuracy=%f, test_avg_acc=%f, elapse=%f"
                 % (pass_id, g_acc[1], test_avg_acc,
