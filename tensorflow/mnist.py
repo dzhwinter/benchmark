@@ -8,7 +8,6 @@ import numpy as np
 
 import tensorflow as tf
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
 
 DTYPE = tf.float32
 
