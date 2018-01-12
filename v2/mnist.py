@@ -2,7 +2,7 @@ import os
 from PIL import Image
 import numpy as np
 import paddle.v2 as paddle
-import time
+
 with_gpu = os.getenv('WITH_GPU', '0') != '0'
 
 
@@ -78,27 +78,23 @@ def main():
         cost=cost, parameters=parameters, update_equation=optimizer)
 
     lists = []
-    class NameSpace:
-       pass
-    ns = NameSpace()
-    ns.start = time.time()
+
     def event_handler(event):
         if isinstance(event, paddle.event.EndIteration):
-            ns.end = time.time()
             if event.batch_id % 1 == 0:
-                print "Pass=%d, Batch=%d, Cost=%f, error=%f, elapse=%f" % (
-                    event.pass_id, event.batch_id, event.cost, event.metrics.values()[0], (ns.end-ns.start)/100)
-            ns.start = time.time()
+                print "Pass %d, Batch %d, Cost %f, %s" % (
+                    event.pass_id, event.batch_id, event.cost, event.metrics)
         if isinstance(event, paddle.event.EndPass):
             # save parameters
-            #with open('params_pass_%d.tar' % event.pass_id, 'w') as f:
-            #    trainer.save_parameter_to_tar(f)
+            # with open('params_pass_%d.tar' % event.pass_id, 'w') as f:
+            #     trainer.save_parameter_to_tar(f)
+
             result = trainer.test(reader=paddle.batch(
                 paddle.dataset.mnist.test(), batch_size=128))
-            print "Test with Pass=%d, Cost=%f, accuracy=%f\n" % (
-                event.pass_id, result.cost, 1 - result.metrics.values()[0])
-            #lists.append((event.pass_id, result.cost,
-            #              result.metrics['classification_error_evaluator']))
+            print "Test with Pass %d, Cost %f, %s\n" % (
+                event.pass_id, result.cost, result.metrics)
+            lists.append((event.pass_id, result.cost,
+                          result.metrics['classification_error_evaluator']))
 
     trainer.train(
         reader=paddle.batch(
@@ -106,6 +102,11 @@ def main():
             batch_size=128),
         event_handler=event_handler,
         num_passes=5)
+
+    # find the best pass
+    best = sorted(lists, key=lambda list: float(list[1]))[0]
+    print 'Best pass is %s, testing Avgcost is %s' % (best[0], best[1])
+    print 'The classification accuracy is %.2f%%' % (100 - float(best[2]) * 100)
 
 
 if __name__ == '__main__':
