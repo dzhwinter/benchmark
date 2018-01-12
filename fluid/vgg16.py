@@ -125,7 +125,22 @@ def main():
 
         return test_accuracy.eval(exe)
 
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    def eval_test(ext, accuracy, avg_cost):
+        accuracy.reset(exe)
+        for batch_id, data in enumerate(test_reader()):
+            img_data = np.array(map(lambda x: x[0].reshape(data_shape),
+                                    data)).astype("float32")
+            y_data = np.array(map(lambda x: x[1], data)).astype("int64")
+            y_data = y_data.reshape([-1, 1])
+            exe.run(fluid.default_main_program(),
+                    feed={"pixel": img_data,
+                          "label": y_data},
+                    fetch_list=[avg_cost] + accuracy.metrics)
+        pass_acc = accuracy.eval(exe)
+        return pass_acc
+        
+
+    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
     exe = fluid.Executor(place)
 
     exe.run(fluid.default_startup_program())
@@ -152,10 +167,11 @@ def main():
                   (pass_id, iters, loss, acc))
         pass_elapsed = time.time() - start_time
 
-        pass_test_acc = test(exe)
+        pass_test_acc = eval_test(exe, accuracy, avg_cost)
+        pass_acc = accuracy.eval(exe)
         print(
-            "Pass = %d, Training performance = %f imgs/s, Test accuracy = %f\n"
-            % (pass_id, num_samples / pass_elapsed, pass_test_acc))
+            "Pass = %d, Training performance = %f imgs/s, pass_test_acc = %f, pass_acc = %f\n"
+            % (pass_id, num_samples / pass_elapsed, pass_test_acc, pass_acc))
 
 
 def print_arguments():
