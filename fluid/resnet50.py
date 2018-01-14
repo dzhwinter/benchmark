@@ -20,8 +20,8 @@ def parse_args():
     parser.add_argument(
         '--model',
         type=str,
-        choices=['resnet', 'resnet_cifar10'],
-        default='resnet',
+        choices=['resnet_imagenet', 'resnet_cifar10'],
+        default='resnet_imagenet',
         help='The model architecture.')
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
@@ -77,8 +77,9 @@ def print_arguments(args):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
 
+
 def conv_bn_layer(input, ch_out, filter_size, stride, padding, act='relu'):
-    tmp = fluid.layers.conv2d(
+    conv1 = fluid.layers.conv2d(
         input=input,
         filter_size=filter_size,
         num_filters=ch_out,
@@ -86,7 +87,8 @@ def conv_bn_layer(input, ch_out, filter_size, stride, padding, act='relu'):
         padding=padding,
         act=None,
         bias_attr=False)
-    return fluid.layers.batch_norm(input=tmp, act=act)
+    return fluid.layers.batch_norm(input=conv1, act=act)
+
 
 def shortcut(input, ch_out, stride):
     ch_in = input.shape[1] if args.data_format == 'NCHW' else input.shape[-1]
@@ -95,11 +97,13 @@ def shortcut(input, ch_out, stride):
     else:
         return input
 
+
 def basicblock(input, ch_out, stride):
     short = shortcut(input, ch_out, stride)
     conv1 = conv_bn_layer(input, ch_out, 3, stride, 1)
     conv2 = conv_bn_layer(conv1, ch_out, 3, 1, 1, act=None)
     return fluid.layers.elementwise_add(x=short, y=conv2, act='relu')
+
 
 def bottleneck(input, ch_out, stride):
     short = shortcut(input, ch_out * 4, stride)
@@ -108,13 +112,15 @@ def bottleneck(input, ch_out, stride):
     conv3 = conv_bn_layer(conv2, ch_out * 4, 1, 1, 0, act=None)
     return fluid.layers.elementwise_add(x=short, y=conv3, act='relu')
 
+
 def layer_warp(block_func, input, ch_out, count, stride):
     res_out = block_func(input, ch_out, stride)
     for i in range(1, count):
         res_out = block_func(res_out, ch_out, 1)
     return res_out
 
-def resnet(input, class_dim, depth=50, data_format='NCHW'):
+
+def resnet_imagenet(input, class_dim, depth=50, data_format='NCHW'):
 
     cfg = {
         18: ([2, 2, 2, 1], basicblock),
@@ -140,6 +146,7 @@ def resnet(input, class_dim, depth=50, data_format='NCHW'):
     out = fluid.layers.fc(input=pool2, size=class_dim, act='softmax')
     return out
 
+
 def resnet_cifar10(input, class_dim, depth=32, data_format='NCHW'):
     assert (depth - 2) % 6 == 0
 
@@ -154,6 +161,7 @@ def resnet_cifar10(input, class_dim, depth=32, data_format='NCHW'):
         input=res3, pool_size=8, pool_type='avg', pool_stride=1)
     out = fluid.layers.fc(input=pool, size=class_dim, act='softmax')
     return out
+
 
 def run_benchmark(model, args):
     if args.use_cprof:
@@ -185,7 +193,8 @@ def run_benchmark(model, args):
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
-            paddle.dataset.cifar.train10() if args.data_set == 'cifar10' else paddle.dataset.flowers.train(),
+            paddle.dataset.cifar.train10()
+            if args.data_set == 'cifar10' else paddle.dataset.flowers.train(),
             buf_size=5120),
         batch_size=args.batch_size)
 
@@ -245,7 +254,10 @@ def run_benchmark(model, args):
 
 
 if __name__ == '__main__':
-    model_map = {'resnet': resnet, 'resnet_cifar10' : resnet_cifar10 }
+    model_map = {
+        'resnet_imagenet': resnet_imagenet,
+        'resnet_cifar10': resnet_cifar10
+    }
     args = parse_args()
     print_arguments(args)
     if args.data_format == 'NHWC':

@@ -81,12 +81,11 @@ def dynamic_lstm_model(dict_size,
     embedding = fluid.layers.embedding(
         input=word_idx, size=[dict_size, embedding_dim])
 
-    sentence = fluid.layers.fc(input=embedding, size=hidden_dim * 4, bias_attr=True)
+    sentence = fluid.layers.fc(input=embedding, size=hidden_dim, bias_attr=True)
 
     rnn = fluid.layers.DynamicRNN()
     with rnn.block():
         word = rnn.step_input(sentence)
-        hidden_dim = 32
         prev_hidden = rnn.memory(value=0.0, shape=[hidden_dim])
         prev_cell = rnn.memory(value=0.0, shape=[hidden_dim])
 
