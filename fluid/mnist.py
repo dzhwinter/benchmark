@@ -13,8 +13,9 @@ import paddle.v2.fluid.profiler as profiler
 
 SEED = 1
 DTYPE = "float32"
+
 # random seed must set before configuring the network.
-fluid.default_startup_program().random_seed = SEED
+# fluid.default_startup_program().random_seed = SEED
 
 
 def parse_args():
@@ -149,10 +150,12 @@ def run_benchmark(model, args):
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
         pass_end = time.time()
+        train_avg_acc = accuracy.eval(exe)
         test_avg_acc = eval_test(exe, accuracy, avg_cost)
-        pass_acc = accuracy.eval(exe)
-        print("pass=%d, test_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
-              (pass_id, pass_acc, test_avg_acc, (pass_end - pass_start) / 1000))
+
+        print("pass=%d, train_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
+              (pass_id, train_avg_acc, test_avg_acc,
+               (pass_end - pass_start) / 1000))
 
 
 if __name__ == '__main__':
