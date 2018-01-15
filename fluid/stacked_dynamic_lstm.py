@@ -1,30 +1,24 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import numpy as np
 import argparse
+import cPickle
+import os
+import random
 import time
 
-import paddle.v2 as paddle
+import numpy
+import paddle.v2.dataset.imdb as imdb
 import paddle.v2.fluid as fluid
-import paddle.v2.fluid.profiler as profiler
+from paddle.v2 import batch
 
 
 def parse_args():
-    parser = argparse.ArgumentParser("LSTM model benchmark.")
+    parser = argparse.ArgumentParser("Understand Sentiment by Dynamic RNN.")
     parser.add_argument(
         '--batch_size',
         type=int,
         default=32,
         help='The sequence number of a batch data. (default: %(default)d)')
     parser.add_argument(
-        '--stacked_num',
-        type=int,
-        default=5,
-        help='Number of lstm layers to stack. (default: %(default)d)')
-    parser.add_argument(
-        '--embedding_dim',
+        '--emb_dim',
         type=int,
         default=512,
         help='Dimension of embedding table. (default: %(default)d)')
@@ -39,55 +33,88 @@ def parse_args():
         default=100,
         help='Epoch number to train. (default: %(default)d)')
     parser.add_argument(
-        '--learning_rate',
-        type=float,
-        default=0.002,
-        help='Learning rate used to train. (default: %(default)f)')
-    parser.add_argument(
         '--device',
         type=str,
         default='CPU',
         choices=['CPU', 'GPU'],
-        help='The device type. (default: %(default)s)')
+        help='The device type.')
     parser.add_argument(
-        '--infer_only', action='store_true', help='If set, run forward only.')
+        '--crop_size',
+        type=int,
+        default=int(os.environ.get('CROP_SIZE', '1500')),
+        help='The max sentence length of input. Since this model use plain RNN,'
+        ' Gradient could be explored if sentence is too long')
     parser.add_argument(
-        '--use_cprof', action='store_true', help='If set, use cProfile.')
-    parser.add_argument(
-        '--use_nvprof',
-        action='store_true',
-        help='If set, use nvprof for CUDA.')
+        '--clean',
+        type=bool,
+        default=os.environ.get('CLEAN', 'False').lower() != 'false',
+        help='clean the cached pickle file.')
     args = parser.parse_args()
     return args
 
 
-def print_arguments(args):
-    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
-                                vars(args)['device'] == 'GPU')
-    print('-----------  Configuration Arguments -----------')
-    for arg, value in sorted(vars(args).iteritems()):
-        print('%s: %s' % (arg, value))
-    print('------------------------------------------------')
+try:
+    with open('word_dict.pkl', 'r') as f:
+        word_dict = cPickle.load(f)
+except:
+    word_dict = imdb.word_dict()
+    with open('word_dict.pkl', 'w') as f:
+        cPickle.dump(word_dict, f, cPickle.HIGHEST_PROTOCOL)
 
 
-def dynamic_lstm_model(dict_size,
-                       embedding_dim,
-                       hidden_dim,
-                       stacked_num,
-                       class_num=2,
-                       is_train=True):
-    word_idx = fluid.layers.data(
-        name="word_idx", shape=[1], dtype="int64", lod_level=1)
-    embedding = fluid.layers.embedding(
-        input=word_idx, size=[dict_size, embedding_dim])
+def cache_reader(reader, clean):
+    print 'Reading data to memory'
+    fn = 'data.pkl'
+    if clean:
+        try:
+            os.remove(fn)
+        except:
+            pass
+    try:
+        with open(fn, 'r') as f:
+            items = cPickle.load(f)
+    except:
+        items = list(reader())
+        with open(fn, 'w') as f:
+            cPickle.dump(items, f, cPickle.HIGHEST_PROTOCOL)
 
-    sentence = fluid.layers.fc(input=embedding, size=hidden_dim, bias_attr=True)
+    print 'Done. data size %d' % len(items)
+
+    def __impl__():
+        offsets = range(len(items))
+        random.shuffle(offsets)
+        for i in offsets:
+            yield items[i]
+
+    return __impl__
+
+
+def crop_sentence(reader, crop_size):
+    unk_value = word_dict['<unk>']
+
+    def __impl__():
+        for item in reader():
+            if len([x for x in item[0] if x != unk_value]) < crop_size:
+                yield item
+
+    return __impl__
+
+
+def main():
+    args = parse_args()
+    data = fluid.layers.data(
+        name="words", shape=[1], lod_level=1, dtype='int64')
+    sentence = fluid.layers.embedding(
+        input=data, size=[len(word_dict), args.emb_dim])
+
+    sentence = fluid.layers.fc(input=sentence, size=200, act='tanh')
 
     rnn = fluid.layers.DynamicRNN()
+    lstm_size = args.hidden_dim
     with rnn.block():
         word = rnn.step_input(sentence)
-        prev_hidden = rnn.memory(value=0.0, shape=[hidden_dim])
-        prev_cell = rnn.memory(value=0.0, shape=[hidden_dim])
+        prev_hidden = rnn.memory(value=0.0, shape=[lstm_size])
+        prev_cell = rnn.memory(value=0.0, shape=[lstm_size])
 
         def gate_common(
                 ipt,
@@ -99,13 +126,13 @@ def dynamic_lstm_model(dict_size,
             return gate
 
         forget_gate = fluid.layers.sigmoid(
-            x=gate_common(word, prev_hidden, hidden_dim))
+            x=gate_common(word, prev_hidden, lstm_size))
         input_gate = fluid.layers.sigmoid(
-            x=gate_common(word, prev_hidden, hidden_dim))
+            x=gate_common(word, prev_hidden, lstm_size))
         output_gate = fluid.layers.sigmoid(
-            x=gate_common(word, prev_hidden, hidden_dim))
+            x=gate_common(word, prev_hidden, lstm_size))
         cell_gate = fluid.layers.sigmoid(
-            x=gate_common(word, prev_hidden, hidden_dim))
+            x=gate_common(word, prev_hidden, lstm_size))
 
         cell = fluid.layers.sums(input=[
             fluid.layers.elementwise_mul(
@@ -120,97 +147,59 @@ def dynamic_lstm_model(dict_size,
         rnn.update_memory(prev_hidden, hidden)
         rnn.output(hidden)
 
-    lstm_out = fluid.layers.sequence_pool(input=rnn(), pool_type='max')
-    prediction = fluid.layers.fc(input=lstm_out, size=class_num, act='softmax')
+    last = fluid.layers.sequence_pool(rnn(), 'last')
+    logit = fluid.layers.fc(input=last, size=2, act='softmax')
+    loss = fluid.layers.cross_entropy(
+        input=logit,
+        label=fluid.layers.data(
+            name='label', shape=[1], dtype='int64'))
+    loss = fluid.layers.mean(x=loss)
 
-    if not is_train: return word_idx, prediction
-
-    label = fluid.layers.data(name="label", shape=[1], dtype="int64")
-    cost = fluid.layers.cross_entropy(input=prediction, label=label)
-    avg_cost = fluid.layers.mean(x=cost)
-
-    return (word_idx, label), prediction, label, avg_cost
-
-
-def train(args):
-    if args.use_cprof:
-        pr = cProfile.Profile()
-        pr.enable()
-
-    word_dict = paddle.dataset.imdb.word_dict()
-    dict_size = len(word_dict)
-
-    feeding_list, prediction, label, avg_cost = dynamic_lstm_model(
-        dict_size, args.embedding_dim, args.hidden_dim, args.stacked_num)
-
-    adam_optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
-    adam_optimizer.minimize(avg_cost)
-
-    accuracy = fluid.evaluator.Accuracy(input=prediction, label=label)
-
-    # clone from default main program
-    inference_program = fluid.default_main_program().clone()
-    with fluid.program_guard(inference_program):
-        test_accuracy = fluid.evaluator.Accuracy(input=prediction, label=label)
-        test_target = [avg_cost] + test_accuracy.metrics + test_accuracy.states
-        inference_program = fluid.io.get_inference_program(test_target)
-
-    train_reader = paddle.batch(
-        paddle.reader.shuffle(
-            paddle.dataset.imdb.train(word_dict), buf_size=25000),
-        batch_size=args.batch_size)
-
-    test_reader = paddle.batch(
-        paddle.reader.shuffle(
-            paddle.dataset.imdb.test(word_dict), buf_size=25000),
-        batch_size=args.batch_size)
+    adam = fluid.optimizer.Adam()
+    adam.minimize(loss)
 
     place = fluid.CPUPlace() if args.device == 'CPU' else fluid.CUDAPlace(0)
     exe = fluid.Executor(place)
-    feeder = fluid.DataFeeder(feed_list=feeding_list, place=place)
     exe.run(fluid.default_startup_program())
 
-    def do_validation():
-        test_accuracy.reset(exe)
-        for data in test_reader():
-            loss, acc = exe.run(inference_program,
-                                feed=feeder.feed(data),
-                                fetch_list=[avg_cost] + test_accuracy.metrics)
+    def train_loop(pass_num, crop_size):
+        cache = cache_reader(
+            crop_sentence(imdb.train(word_dict), crop_size), clean=args.clean)
+        for pass_id in range(pass_num):
+            train_reader = batch(cache, batch_size=args.batch_size)
 
-        return test_accuracy.eval(exe)
+            pass_start_time = time.time()
+            for batch_id, data in enumerate(train_reader()):
+                tensor_words = to_lodtensor([x[0] for x in data], place)
+                label = numpy.array([x[1] for x in data]).astype("int64")
+                label = label.reshape((-1, 1))
+                loss_np = exe.run(fluid.default_main_program(),
+                                  feed={"words": tensor_words,
+                                        "label": label},
+                                  fetch_list=[loss])[0]
+                print 'Pass', pass_id, 'Batch', batch_id, 'loss', loss_np
 
-    for pass_id in xrange(args.pass_num):
-        pass_start_time = time.time()
-        words_seen = 0
-        accuracy.reset(exe)
-        for batch_id, data in enumerate(train_reader()):
-            words_seen += sum([len(seq[0]) for seq in data])
+            pass_end_time = time.time()
+            time_consumed = pass_end_time - pass_start_time
+            print("pass_id=%d, sec/pass: %f" % (pass_id, time_consumed))
 
-            loss, acc = exe.run(fluid.default_main_program(),
-                                feed=feeder.feed(data),
-                                fetch_list=[avg_cost] + accuracy.metrics)
-            train_acc = accuracy.eval(exe)
+    train_loop(args.pass_num, args.crop_size)
 
-            print("pass_id=%d, batch_id=%d, loss: %f, acc: %f, avg_acc: %f" %
-                  (pass_id, batch_id, loss, acc, train_acc))
 
-        pass_end_time = time.time()
-        time_consumed = pass_end_time - pass_start_time
-        words_per_sec = words_seen / time_consumed
-        test_acc = do_validation()
-        print("pass_id=%d, test_acc: %f, words/s: %f, sec/pass: %f" %
-              (pass_id, test_acc, words_per_sec, time_consumed))
+def to_lodtensor(data, place):
+    seq_lens = [len(seq) for seq in data]
+    cur_len = 0
+    lod = [cur_len]
+    for l in seq_lens:
+        cur_len += l
+        lod.append(cur_len)
+    flattened_data = numpy.concatenate(data, axis=0).astype("int64")
+    flattened_data = flattened_data.reshape([len(flattened_data), 1])
+    res = fluid.LoDTensor()
+    res.set(flattened_data, place)
+    res.set_lod([lod])
+    return res
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    print_arguments(args)
-
-    if args.infer_only:
-        pass
-    else:
-        if args.use_nvprof and args.device == 'GPU':
-            with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
-                train(args)
-        else:
-            train(args)
+    main()
