@@ -157,7 +157,7 @@ def run_benchmark(model, args):
             paddle.dataset.flowers.train(), buf_size=5120),
         batch_size=args.batch_size)
 
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
@@ -170,13 +170,11 @@ def run_benchmark(model, args):
 
     iter = 0
     im_num = 0
-    start_time = time.time()
     for pass_id in range(args.pass_num):
         every_pass_loss = []
         every_pass_acc = []
         accuracy.reset(exe)
-        if iter == args.iterations:
-            iter = 0
+        iter = 0
         for batch_id, data in enumerate(train_reader()):
             if iter < args.skip_batch_num:
                 iter += 1
