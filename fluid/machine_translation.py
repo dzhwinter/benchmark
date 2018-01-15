@@ -34,7 +34,7 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=4,
+    default=16,
     help="The sequence number of a batch data. (default: %(default)d)")
 parser.add_argument(
     "--dict_size",
@@ -47,6 +47,11 @@ parser.add_argument(
     type=int,
     default=2,
     help="The pass number to train. (default: %(default)d)")
+parser.add_argument(
+    "--learning_rate",
+    type=float,
+    default=0.0002,
+    help="Learning rate used to train the model. (default: %(default)f)")
 parser.add_argument(
     "--mode",
     type=str,
@@ -69,6 +74,27 @@ parser.add_argument(
     default=250,
     help="The max length of sequence when doing generation. "
     "(default: %(default)d)")
+
+
+def lstm_step(x_t, hidden_t_prev, cell_t_prev, size):
+    def linear(inputs):
+        return fluid.layers.fc(input=inputs, size=size, bias_attr=True)
+
+    forget_gate = fluid.layers.sigmoid(x=linear([hidden_t_prev, x_t]))
+    input_gate = fluid.layers.sigmoid(x=linear([hidden_t_prev, x_t]))
+    output_gate = fluid.layers.sigmoid(x=linear([hidden_t_prev, x_t]))
+    cell_tilde = fluid.layers.tanh(x=linear([hidden_t_prev, x_t]))
+
+    cell_t = fluid.layers.sums(input=[
+        fluid.layers.elementwise_mul(
+            x=forget_gate, y=cell_t_prev), fluid.layers.elementwise_mul(
+                x=input_gate, y=cell_tilde)
+    ])
+
+    hidden_t = fluid.layers.elementwise_mul(
+        x=output_gate, y=fluid.layers.tanh(x=cell_t))
+
+    return hidden_t, cell_t
 
 
 def seq_to_seq_net(word_vector_dim,
@@ -153,15 +179,14 @@ def seq_to_seq_net(word_vector_dim,
 
         with rnn.block():
             current_word = rnn.step_input(target_embedding)
-            hidden_mem = rnn.memory(init=decoder_boot)
+            encoder_vec = rnn.static_input(encoder_vec)
+            encoder_proj = rnn.static_input(encoder_proj)
+            hidden_mem = rnn.memory(init=decoder_boot, need_reorder=True)
             cell_mem = rnn.memory(init=cell_init)
             context = simple_attention(encoder_vec, encoder_proj, hidden_mem)
             decoder_inputs = fluid.layers.concat(
                 input=[context, current_word], axis=1)
-            h, c = fluid.layers.lstm_unit(
-                x_t=decoder_inputs,
-                hidden_t_prev=hidden_mem,
-                cell_t_prev=cell_mem)
+            h, c = lstm_step(decoder_inputs, hidden_mem, cell_mem, decoder_size)
             rnn.update_memory(hidden_mem, h)
             rnn.update_memory(cell_mem, c)
             out = fluid.layers.fc(input=h,
@@ -169,7 +194,6 @@ def seq_to_seq_net(word_vector_dim,
                                   bias_attr=ParamAttr(),
                                   act='softmax')
             rnn.output(out)
-
         return rnn()
 
     if not is_generating:
@@ -187,7 +211,6 @@ def seq_to_seq_net(word_vector_dim,
 
         label = fluid.layers.data(
             name=feeding_list[2], shape=[1], dtype='int64', lod_level=1)
-
         cost = fluid.layers.cross_entropy(input=prediction, label=label)
         avg_cost = fluid.layers.mean(x=cost)
 
@@ -206,7 +229,15 @@ def to_lodtensor(data, place):
     lod_t = core.LoDTensor()
     lod_t.set(flattened_data, place)
     lod_t.set_lod([lod])
-    return lod_t
+    return lod_t, lod[-1]
+
+
+def lodtensor_to_ndarray(lod_tensor):
+    dims = lod_tensor.get_dims()
+    ndarray = np.zeros(shape=dims).astype('float32')
+    for i in xrange(np.product(dims)):
+        ndarray.ravel()[i] = lod_tensor.get_float_element(i)
+    return ndarray
 
 
 def train():
@@ -220,7 +251,10 @@ def train():
         beam_size=args.beam_size,
         max_length=args.max_length)
 
-    optimizer = fluid.optimizer.Adam(learning_rate=5e-5)
+    # clone from default main program
+    inference_program = fluid.default_main_program().clone()
+
+    optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
     optimizer.minimize(avg_cost)
 
     train_batch_generator = paddle.batch(
@@ -228,15 +262,43 @@ def train():
             paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
         batch_size=args.batch_size)
 
-    place = core.GPUPlace() if args.use_gpu else core.CPUPlace()
+    test_batch_generator = paddle.batch(
+        paddle.reader.shuffle(
+            paddle.dataset.wmt14.test(args.dict_size), buf_size=1000),
+        batch_size=args.batch_size)
+
+    place = core.CUDAPlace(0) if args.use_gpu else core.CPUPlace()
     exe = Executor(place)
     exe.run(framework.default_startup_program())
 
+    def do_validation():
+        total_loss = 0.0
+        count = 0
+        for batch_id, data in enumerate(test_batch_generator()):
+            src_seq = to_lodtensor(map(lambda x: x[0], data), place)[0]
+            trg_seq = to_lodtensor(map(lambda x: x[1], data), place)[0]
+            lbl_seq = to_lodtensor(map(lambda x: x[2], data), place)[0]
+
+            fetch_outs = exe.run(
+                inference_program,
+                feed=dict(zip(*[feeding_list, (src_seq, trg_seq, lbl_seq)])),
+                fetch_list=[avg_cost],
+                return_numpy=False)
+
+            total_loss += lodtensor_to_ndarray(fetch_outs[0])[0]
+            count += 1
+
+        return total_loss / count
+
     for pass_id in xrange(args.pass_number):
+        pass_start_time = time.time()
+        words_seen = 0
         for batch_id, data in enumerate(train_batch_generator()):
-            src_seq = to_lodtensor(map(lambda x: x[0], data), place)
-            trg_seq = to_lodtensor(map(lambda x: x[1], data), place)
-            lbl_seq = to_lodtensor(map(lambda x: x[2], data), place)
+            src_seq, word_num = to_lodtensor(map(lambda x: x[0], data), place)
+            words_seen += word_num
+            trg_seq, word_num = to_lodtensor(map(lambda x: x[1], data), place)
+            words_seen += word_num
+            lbl_seq, _ = to_lodtensor(map(lambda x: x[2], data), place)
 
             fetch_outs = exe.run(
                 framework.default_main_program(),
@@ -244,9 +306,15 @@ def train():
                 fetch_list=[avg_cost])
 
             avg_cost_val = np.array(fetch_outs[0])
-
-            print('pass_id=%d, batch=%d, avg_cost=%f' %
+            print('pass_id=%d, batch_id=%d, train_loss: %f' %
                   (pass_id, batch_id, avg_cost_val))
+
+        pass_end_time = time.time()
+        test_loss = do_validation()
+        time_consumed = pass_end_time - pass_start_time
+        words_per_sec = words_seen / time_consumed
+        print("pass_id=%d, test_loss: %f, words/s: %f, sec/pass: %f" %
+              (pass_id, test_loss, words_per_sec, time_consumed))
 
 
 def infer():
