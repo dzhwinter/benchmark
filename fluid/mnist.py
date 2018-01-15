@@ -160,6 +160,7 @@ def run_benchmark(model, args):
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
         pass_end = time.time()
+
         train_avg_acc = accuracy.eval(exe)
         test_avg_acc = eval_test(exe, accuracy, inference_program)
 
