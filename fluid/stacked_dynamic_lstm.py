@@ -172,7 +172,6 @@ def train(args):
 
     def do_validation():
         test_accuracy.reset(exe)
-
         for data in test_reader():
             loss, acc = exe.run(inference_program,
                                 feed=feeder.feed(data),
