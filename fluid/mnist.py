@@ -149,10 +149,13 @@ def run_benchmark(model, args):
             y_data = y_data.reshape([len(y_data), 1])
 
             start = time.time()
-            outs = exe.run(fluid.default_main_program(),
-                           feed={"pixel": img_data,
-                                 "label": y_data},
-                           fetch_list=[avg_cost] + accuracy.metrics)
+            outs = exe.run(
+                fluid.default_main_program(),
+                feed={"pixel": img_data,
+                      "label": y_data},
+                fetch_list=[avg_cost] + accuracy.metrics
+            )  # The accuracy is the accumulation of batches, but not the current batch.
+
             end = time.time()
             loss = np.array(outs[0])
             acc = np.array(outs[1])
