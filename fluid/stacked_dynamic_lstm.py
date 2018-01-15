@@ -102,15 +102,16 @@ def crop_sentence(reader, crop_size):
 
 def main():
     args = parse_args()
+    lstm_size = args.hidden_dim
+
     data = fluid.layers.data(
         name="words", shape=[1], lod_level=1, dtype='int64')
     sentence = fluid.layers.embedding(
         input=data, size=[len(word_dict), args.emb_dim])
 
-    sentence = fluid.layers.fc(input=sentence, size=200, act='tanh')
+    sentence = fluid.layers.fc(input=sentence, size=lstm_size, act='tanh')
 
     rnn = fluid.layers.DynamicRNN()
-    lstm_size = args.hidden_dim
     with rnn.block():
         word = rnn.step_input(sentence)
         prev_hidden = rnn.memory(value=0.0, shape=[lstm_size])
