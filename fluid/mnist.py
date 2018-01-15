@@ -8,13 +8,13 @@ import time
 
 import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
-import paddle.v2.fluid.core as core
 import paddle.v2.fluid.profiler as profiler
 
 SEED = 1
 DTYPE = "float32"
+
 # random seed must set before configuring the network.
-fluid.default_startup_program().random_seed = SEED
+# fluid.default_startup_program().random_seed = SEED
 
 
 def parse_args():
@@ -84,7 +84,7 @@ def cnn_model(data):
     return predict
 
 
-def eval_test(exe, accuracy, avg_cost):
+def eval_test(exe, accuracy, inference_program):
     test_reader = paddle.batch(
         paddle.dataset.mnist.test(), batch_size=args.batch_size)
     accuracy.reset(exe)
@@ -94,10 +94,7 @@ def eval_test(exe, accuracy, avg_cost):
         y_data = np.array(map(lambda x: x[1], data)).astype("int64")
         y_data = y_data.reshape([len(y_data), 1])
 
-        exe.run(fluid.default_main_program(),
-                feed={"pixel": img_data,
-                      "label": y_data},
-                fetch_list=[avg_cost] + accuracy.metrics)
+        exe.run(inference_program, feed={"pixel": img_data, "label": y_data})
 
     pass_acc = accuracy.eval(exe)
     return pass_acc
@@ -108,25 +105,39 @@ def run_benchmark(model, args):
         pr = cProfile.Profile()
         pr.enable()
     start_time = time.time()
+    # Input data
     images = fluid.layers.data(name='pixel', shape=[1, 28, 28], dtype=DTYPE)
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
-    predict = model(images)
 
+    # Train program
+    predict = model(images)
     cost = fluid.layers.cross_entropy(input=predict, label=label)
     avg_cost = fluid.layers.mean(x=cost)
+
+    # Evaluator
+    accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
+
+    # inference program
+    inference_program = fluid.default_main_program().clone()
+    with fluid.program_guard(inference_program):
+        test_target = accuracy.metrics + accuracy.states
+        inference_program = fluid.io.get_inference_program(test_target)
+
+    # Optimization
     opt = fluid.optimizer.AdamOptimizer(
         learning_rate=0.001, beta1=0.9, beta2=0.999)
     opt.minimize(avg_cost)
 
-    accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
-
-    train_reader = paddle.batch(
-        paddle.dataset.mnist.train(), batch_size=args.batch_size)
-
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    # Initialize executor
+    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.CUDAPlace(0)
     exe = fluid.Executor(place)
 
+    # Parameter initialization
     exe.run(fluid.default_startup_program())
+
+    # Reader
+    train_reader = paddle.batch(
+        paddle.dataset.mnist.train(), batch_size=args.batch_size)
 
     for pass_id in range(args.pass_num):
         accuracy.reset(exe)
@@ -149,10 +160,13 @@ def run_benchmark(model, args):
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
         pass_end = time.time()
-        test_avg_acc = eval_test(exe, accuracy, avg_cost)
-        pass_acc = accuracy.eval(exe)
-        print("pass=%d, test_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
-              (pass_id, pass_acc, test_avg_acc, (pass_end - pass_start) / 1000))
+
+        train_avg_acc = accuracy.eval(exe)
+        test_avg_acc = eval_test(exe, accuracy, inference_program)
+
+        print("pass=%d, train_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
+              (pass_id, train_avg_acc, test_avg_acc,
+               (pass_end - pass_start) / 1000))
 
 
 if __name__ == '__main__':

@@ -9,6 +9,50 @@ import paddle.v2.dataset.imdb as imdb
 import paddle.v2.fluid as fluid
 from paddle.v2 import batch
 
+
+def parse_args():
+    parser = argparse.ArgumentParser("Understand Sentiment by Dynamic RNN.")
+    parser.add_argument(
+        '--batch_size',
+        type=int,
+        default=32,
+        help='The sequence number of a batch data. (default: %(default)d)')
+    parser.add_argument(
+        '--emb_dim',
+        type=int,
+        default=512,
+        help='Dimension of embedding table. (default: %(default)d)')
+    parser.add_argument(
+        '--hidden_dim',
+        type=int,
+        default=512,
+        help='Hidden size of lstm unit. (default: %(default)d)')
+    parser.add_argument(
+        '--pass_num',
+        type=int,
+        default=100,
+        help='Epoch number to train. (default: %(default)d)')
+    parser.add_argument(
+        '--device',
+        type=str,
+        default='CPU',
+        choices=['CPU', 'GPU'],
+        help='The device type.')
+    parser.add_argument(
+        '--crop_size',
+        type=int,
+        default=int(os.environ.get('CROP_SIZE', '1500')),
+        help='The max sentence length of input. Since this model use plain RNN,'
+        ' Gradient could be explored if sentence is too long')
+    parser.add_argument(
+        '--clean',
+        type=bool,
+        default=os.environ.get('CLEAN', 'False').lower() != 'false',
+        help='clean the cached pickle file.')
+    args = parser.parse_args()
+    return args
+
+
 try:
     with open('word_dict.pkl', 'r') as f:
         word_dict = cPickle.load(f)
@@ -58,17 +102,18 @@ def crop_sentence(reader, crop_size):
 
 def main():
     args = parse_args()
+    lstm_size = args.hidden_dim
+
     data = fluid.layers.data(
         name="words", shape=[1], lod_level=1, dtype='int64')
     sentence = fluid.layers.embedding(
         input=data, size=[len(word_dict), args.emb_dim])
 
-    sentence = fluid.layers.fc(input=sentence, size=200, act='tanh')
+    sentence = fluid.layers.fc(input=sentence, size=lstm_size, act='tanh')
 
     rnn = fluid.layers.DynamicRNN()
     with rnn.block():
         word = rnn.step_input(sentence)
-        lstm_size = 32
         prev_hidden = rnn.memory(value=0.0, shape=[lstm_size])
         prev_cell = rnn.memory(value=0.0, shape=[lstm_size])
 
@@ -140,44 +185,6 @@ def main():
             print("pass_id=%d, sec/pass: %f" % (pass_id, time_consumed))
 
     train_loop(args.pass_num, args.crop_size)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser("Understand Sentiment by Dynamic RNN.")
-    parser.add_argument(
-        '--batch_size',
-        type=int,
-        default=int(os.environ.get('BATCH_SIZE', '64')),
-        help='The minibatch size.')
-    parser.add_argument(
-        '--emb_dim',
-        type=int,
-        default=int(os.environ.get('EMB_DIM', '32')),
-        help='The embedding dim.')
-    parser.add_argument(
-        '--pass_num',
-        type=int,
-        default=int(os.environ.get('PASS_NUM', '100')),
-        help='The number of passes.')
-    parser.add_argument(
-        '--device',
-        type=str,
-        default='CPU',
-        choices=['CPU', 'GPU'],
-        help='The device type.')
-    parser.add_argument(
-        '--crop_size',
-        type=int,
-        default=int(os.environ.get('CROP_SIZE', '1500')),
-        help='The max sentence length of input. Since this model use plain RNN,'
-        ' Gradient could be explored if sentence is too long')
-    parser.add_argument(
-        '--clean',
-        type=bool,
-        default=os.environ.get('CLEAN', 'False').lower() != 'false',
-        help='clean the cached pickle file.')
-    args = parser.parse_args()
-    return args
 
 
 def to_lodtensor(data, place):
