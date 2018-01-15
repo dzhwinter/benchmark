@@ -201,7 +201,7 @@ def run_benchmark(model, args):
                   (pass_id, iter, str(loss), str(acc), str(pass_acc)))
             iter += 1
             im_num += label.shape[0]
-        print("Pass=%d, Loss=%f, Accuray=%f\n" %
+        print("Pass: %d, Loss: %f, Accuray: %f\n" %
               (pass_id, np.mean(every_pass_loss), np.mean(every_pass_acc)))
     duration = time.time() - start_time
     examples_per_sec = im_num / duration
