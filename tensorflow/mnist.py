@@ -109,8 +109,8 @@ def run_benchmark(args):
                 map(lambda x: np.transpose(x[0].reshape([1, 28, 28]), axes=[1,2,0]), data)).astype("float32")
             labels_data = np.array(map(lambda x: x[1], data)).astype("int64")
 
-            _, loss, acc, g_acc = sess.run(
-                [train_op, avg_cost, accuracy, g_accuracy],
+            loss, acc, g_acc = sess.run(
+                [avg_cost, accuracy, g_accuracy],
                 feed_dict={images: images_data,
                            labels: labels_data})
         return g_acc[1]
