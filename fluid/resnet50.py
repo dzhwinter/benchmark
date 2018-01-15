@@ -172,6 +172,8 @@ def run_benchmark(model, args):
     im_num = 0
     start_time = time.time()
     for pass_id in range(args.pass_num):
+        every_pass_loss = []
+        every_pass_acc = []
         accuracy.reset(exe)
         if iter == args.iterations:
             iter = 0
@@ -179,7 +181,7 @@ def run_benchmark(model, args):
             if iter < args.skip_batch_num:
                 iter += 1
                 continue
-            if pass_id == 0:
+            if pass_id == 0 and iter == args.skip_batch_num:
                 start_time = time.time()
             if iter == args.iterations:
                 break
@@ -192,14 +194,16 @@ def run_benchmark(model, args):
                                 feed={'data': image,
                                       'label': label},
                                 fetch_list=[avg_cost] + accuracy.metrics)
+            every_pass_acc.append(acc)
+            every_pass_loss.append(loss)
             pass_acc = accuracy.eval(exe)
-            print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (iter, str(loss), str(acc), str(pass_acc)))
+            print("Pass: %d, Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
+                  (pass_id, iter, str(loss), str(acc), str(pass_acc)))
             iter += 1
             im_num += label.shape[0]
-
+        print("Pass=%d, Loss=%f, Accuray=%f\n" %
+              (pass_id, np.mean(every_pass_loss), np.mean(every_pass_acc)))
     duration = time.time() - start_time
-    #im_num = im_num - args.skip_batch_num * args.batch_size
     examples_per_sec = im_num / duration
     sec_per_batch = duration / (iter - args.skip_batch_num) / args.pass_num
 
