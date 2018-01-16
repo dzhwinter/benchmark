@@ -25,7 +25,7 @@ import paddle.v2 as paddle
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
-    "--word_vector_dim",
+    "--embedding_dim",
     type=int,
     default=512,
     help="The dimension of embedding table. (default: %(default)d)")
@@ -43,7 +43,7 @@ parser.add_argument(
     "--batch_size",
     type=int,
     default=128,
-    help="The sequence number of a batch data. (default: %(default)d)")
+    help="The sequence number of a mini-batch data. (default: %(default)d)")
 parser.add_argument(
     "--dict_size",
     type=int,
@@ -56,7 +56,7 @@ parser.add_argument(
     default=81,
     help="Max number of time steps for sequence. (default: %(default)d)")
 parser.add_argument(
-    "--pass_number",
+    "--pass_num",
     type=int,
     default=10,
     help="The pass number to train. (default: %(default)d)")
@@ -66,11 +66,7 @@ parser.add_argument(
     default=0.0002,
     help="Learning rate used to train the model. (default: %(default)f)")
 parser.add_argument(
-    "--mode",
-    type=str,
-    default='train',
-    choices=['train', 'infer'],
-    help="Do training or inference. (default: %(default)s)")
+    "--infer_only", action='store_true', help="If set, run forward only.")
 parser.add_argument(
     "--beam_size",
     type=int,
@@ -80,7 +76,7 @@ parser.add_argument(
     "--max_generation_length",
     type=int,
     default=250,
-    help="The max length of sequence when doing generation. "
+    help="The maximum length of sequence when doing generation. "
     "(default: %(default)d)")
 parser.add_argument(
     "--save_freq",
@@ -201,7 +197,7 @@ class LSTMCellWithSimpleAttention(RNNCell):
             inputs=tf.reshape(
                 concated, shape=[-1, self._num_units * 2]),
             num_outputs=1,
-            activation_fn=None,
+            activation_fn=tf.nn.tanh,
             biases_initializer=None)
         attention_weights_reshaped = tf.reshape(
             attention_weights, shape=[tf.shape(encoder_vec)[0], -1, 1])
@@ -267,19 +263,14 @@ class LSTMCellWithSimpleAttention(RNNCell):
                                   memory)
 
 
-def seq_to_seq_net(word_vector_dim,
-                   encoder_size,
-                   decoder_size,
-                   source_dict_dim,
-                   target_dict_dim,
-                   is_generating=False,
-                   beam_size=3,
-                   max_generation_length=250):
+def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
+                   target_dict_dim, is_generating, beam_size,
+                   max_generation_length):
     src_word_idx = tf.placeholder(tf.int32, shape=[None, None])
     src_sequence_length = tf.placeholder(tf.int32, shape=[None, ])
 
     src_embedding_weights = tf.get_variable("source_word_embeddings",
-                                            [source_dict_dim, word_vector_dim])
+                                            [source_dict_dim, embedding_dim])
     src_embedding = tf.nn.embedding_lookup(src_embedding_weights, src_word_idx)
 
     src_forward_cell = tf.nn.rnn_cell.BasicLSTMCell(encoder_size)
@@ -298,7 +289,7 @@ def seq_to_seq_net(word_vector_dim,
     # project the encoder outputs to size of decoder lstm
     encoded_proj = tf.contrib.layers.fully_connected(
         inputs=tf.reshape(
-            encoded_vec, shape=[-1, word_vector_dim * 2]),
+            encoded_vec, shape=[-1, embedding_dim * 2]),
         num_outputs=decoder_size,
         activation_fn=None,
         biases_initializer=None)
@@ -309,9 +300,9 @@ def seq_to_seq_net(word_vector_dim,
     backword_first = tf.slice(encoder_outputs[1], [0, 0, 0], [-1, 1, -1])
     decoder_boot = tf.contrib.layers.fully_connected(
         inputs=tf.reshape(
-            backword_first, shape=[-1, word_vector_dim]),
+            backword_first, shape=[-1, embedding_dim]),
         num_outputs=decoder_size,
-        activation_fn=None,
+        activation_fn=tf.nn.tanh,
         biases_initializer=None)
 
     # prepare the initial state for decoder lstm
@@ -335,7 +326,7 @@ def seq_to_seq_net(word_vector_dim,
         trg_word_idx = tf.placeholder(tf.int32, shape=[None, None])
         trg_sequence_length = tf.placeholder(tf.int32, shape=[None, ])
         trg_embedding_weights = tf.get_variable(
-            "target_word_embeddings", [target_dict_dim, word_vector_dim])
+            "target_word_embeddings", [target_dict_dim, embedding_dim])
         trg_embedding = tf.nn.embedding_lookup(trg_embedding_weights,
                                                trg_word_idx)
 
@@ -388,7 +379,7 @@ def seq_to_seq_net(word_vector_dim,
                                tf.int32) * START_TOKEN_IDX
         # share the same embedding weights with target word
         trg_embedding_weights = tf.get_variable(
-            "target_word_embeddings", [target_dict_dim, word_vector_dim])
+            "target_word_embeddings", [target_dict_dim, embedding_dim])
 
         inference_decoder = beam_search_decoder.BeamSearchDecoder(
             cell=decoder_cell,
@@ -466,7 +457,7 @@ def adapt_batch_data(data):
 
 def train():
     train_feed_list, loss = seq_to_seq_net(
-        word_vector_dim=args.word_vector_dim,
+        embedding_dim=args.embedding_dim,
         encoder_size=args.encoder_size,
         decoder_size=args.decoder_size,
         source_dict_dim=args.dict_size,
@@ -517,7 +508,7 @@ def train():
         init_l = tf.local_variables_initializer()
         sess.run(init_l)
         sess.run(init_g)
-        for pass_id in xrange(args.pass_number):
+        for pass_id in xrange(args.pass_num):
             pass_start_time = time.time()
             words_seen = 0
             for batch_id, data in enumerate(train_batch_generator()):
@@ -540,7 +531,7 @@ def train():
 
 def infer():
     infer_feed_list, predicted_ids = seq_to_seq_net(
-        word_vector_dim=args.word_vector_dim,
+        embedding_dim=args.embedding_dim,
         encoder_size=args.encoder_size,
         decoder_size=args.decoder_size,
         source_dict_dim=args.dict_size,
@@ -594,7 +585,7 @@ def infer():
 if __name__ == '__main__':
     args = parser.parse_args()
     print_arguments(args)
-    if args.mode == 'train':
-        train()
-    else:
+    if args.infer_only:
         infer()
+    else:
+        train()
