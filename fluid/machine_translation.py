@@ -12,12 +12,11 @@ import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
 import paddle.v2.fluid.core as core
 import paddle.v2.fluid.framework as framework
-from paddle.v2.fluid.param_attr import ParamAttr
 from paddle.v2.fluid.executor import Executor
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
-    "--word_vector_dim",
+    "--embedding_dim",
     type=int,
     default=512,
     help="The dimension of embedding table. (default: %(default)d)")
@@ -35,7 +34,7 @@ parser.add_argument(
     "--batch_size",
     type=int,
     default=16,
-    help="The sequence number of a batch data. (default: %(default)d)")
+    help="The sequence number of a mini-batch data. (default: %(default)d)")
 parser.add_argument(
     "--dict_size",
     type=int,
@@ -43,7 +42,7 @@ parser.add_argument(
     help="The dictionary capacity. Dictionaries of source sequence and "
     "target dictionary have same capacity. (default: %(default)d)")
 parser.add_argument(
-    "--pass_number",
+    "--pass_num",
     type=int,
     default=2,
     help="The pass number to train. (default: %(default)d)")
@@ -53,11 +52,7 @@ parser.add_argument(
     default=0.0002,
     help="Learning rate used to train the model. (default: %(default)f)")
 parser.add_argument(
-    "--mode",
-    type=str,
-    default='train',
-    choices=['train', 'infer'],
-    help="Do training or inference. (default: %(default)s)")
+    "--infer_only", action='store_true', help="If set, run forward only.")
 parser.add_argument(
     "--beam_size",
     type=int,
@@ -67,12 +62,12 @@ parser.add_argument(
     "--use_gpu",
     type=distutils.util.strtobool,
     default=True,
-    help="Whether use gpu. (default: %(default)d)")
+    help="Whether to use gpu. (default: %(default)d)")
 parser.add_argument(
     "--max_length",
     type=int,
     default=250,
-    help="The max length of sequence when doing generation. "
+    help="The maximum length of sequence when doing generation. "
     "(default: %(default)d)")
 
 
@@ -97,28 +92,27 @@ def lstm_step(x_t, hidden_t_prev, cell_t_prev, size):
     return hidden_t, cell_t
 
 
-def seq_to_seq_net(word_vector_dim,
-                   encoder_size,
-                   decoder_size,
-                   source_dict_dim,
-                   target_dict_dim,
-                   is_generating=False,
-                   beam_size=3,
-                   max_length=250):
+def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
+                   target_dict_dim, is_generating, beam_size, max_length):
     """Construct a seq2seq network."""
     feeding_list = ["source_sequence", "target_sequence", "label_sequence"]
 
-    def bi_lstm_encoder(input_seq, size):
+    def bi_lstm_encoder(input_seq, gate_size):
+        # Linear transformation part for input gate, output gate, forget gate
+        # and cell activation vectors need be done outside of dynamic_lstm.
+        # So the output size is 4 times of gate_size.
         input_forward_proj = fluid.layers.fc(input=input_seq,
-                                             size=size * 4,
-                                             act='tanh')
+                                             size=gate_size * 4,
+                                             act='tanh',
+                                             bias_attr=True)
         forward, _ = fluid.layers.dynamic_lstm(
-            input=input_forward_proj, size=size * 4)
+            input=input_forward_proj, size=gate_size * 4)
         input_reversed_proj = fluid.layers.fc(input=input_seq,
-                                              size=size * 4,
-                                              act='tanh')
+                                              size=gate_size * 4,
+                                              act='tanh',
+                                              bias_attr=True)
         reversed, _ = fluid.layers.dynamic_lstm(
-            input=input_reversed_proj, size=size * 4, is_reverse=True)
+            input=input_reversed_proj, size=gate_size * 4, is_reverse=True)
         return forward, reversed
 
     src_word_idx = fluid.layers.data(
@@ -126,11 +120,11 @@ def seq_to_seq_net(word_vector_dim,
 
     src_embedding = fluid.layers.embedding(
         input=src_word_idx,
-        size=[source_dict_dim, word_vector_dim],
+        size=[source_dict_dim, embedding_dim],
         dtype='float32')
 
     src_forward, src_reversed = bi_lstm_encoder(
-        input_seq=src_embedding, size=encoder_size)
+        input_seq=src_embedding, gate_size=encoder_size)
 
     encoded_vector = fluid.layers.concat(
         input=[src_forward, src_reversed], axis=1)
@@ -151,13 +145,15 @@ def seq_to_seq_net(word_vector_dim,
                                     decoder_boot, decoder_size):
         def simple_attention(encoder_vec, encoder_proj, decoder_state):
             decoder_state_proj = fluid.layers.fc(input=decoder_state,
-                                                 size=decoder_size)
+                                                 size=decoder_size,
+                                                 bias_attr=False)
             decoder_state_expand = fluid.layers.sequence_expand(
                 x=decoder_state_proj, y=encoder_proj)
             concated = fluid.layers.concat(
                 input=[decoder_state_expand, encoder_proj], axis=1)
             attention_weights = fluid.layers.fc(input=concated,
                                                 size=1,
+                                                act='tanh',
                                                 bias_attr=False)
             attention_weights = fluid.layers.sequence_softmax(
                 x=attention_weights)
@@ -191,7 +187,7 @@ def seq_to_seq_net(word_vector_dim,
             rnn.update_memory(cell_mem, c)
             out = fluid.layers.fc(input=h,
                                   size=target_dict_dim,
-                                  bias_attr=ParamAttr(),
+                                  bias_attr=True,
                                   act='softmax')
             rnn.output(out)
         return rnn()
@@ -202,7 +198,7 @@ def seq_to_seq_net(word_vector_dim,
 
         trg_embedding = fluid.layers.embedding(
             input=trg_word_idx,
-            size=[target_dict_dim, word_vector_dim],
+            size=[target_dict_dim, embedding_dim],
             dtype='float32')
 
         prediction = lstm_decoder_with_attention(trg_embedding, encoded_vector,
@@ -242,7 +238,7 @@ def lodtensor_to_ndarray(lod_tensor):
 
 def train():
     avg_cost, feeding_list = seq_to_seq_net(
-        args.word_vector_dim,
+        args.embedding_dim,
         args.encoder_size,
         args.decoder_size,
         args.dict_size,
@@ -290,7 +286,7 @@ def train():
 
         return total_loss / count
 
-    for pass_id in xrange(args.pass_number):
+    for pass_id in xrange(args.pass_num):
         pass_start_time = time.time()
         words_seen = 0
         for batch_id, data in enumerate(train_batch_generator()):
@@ -323,7 +319,7 @@ def infer():
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    if args.mode == 'train':
-        train()
-    else:
+    if args.infer_only:
         infer()
+    else:
+        train()
