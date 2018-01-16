@@ -436,6 +436,34 @@ def restore(sess, path, var_list=None):
     print('model restored from %s' % path)
 
 
+def adapt_batch_data(data):
+    src_seq = map(lambda x: x[0], data)
+    trg_seq = map(lambda x: x[1], data)
+    lbl_seq = map(lambda x: x[2], data)
+
+    src_sequence_length = np.array(
+        [len(seq) for seq in src_seq]).astype('int32')
+    src_seq_maxlen = np.max(src_sequence_length)
+
+    trg_sequence_length = np.array(
+        [len(seq) for seq in trg_seq]).astype('int32')
+    trg_seq_maxlen = np.max(trg_sequence_length)
+
+    src_seq = np.array(
+        [padding_data(seq, src_seq_maxlen, END_TOKEN_IDX)
+         for seq in src_seq]).astype('int32')
+
+    trg_seq = np.array(
+        [padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
+         for seq in trg_seq]).astype('int32')
+
+    lbl_seq = np.array(
+        [padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
+         for seq in lbl_seq]).astype('int32')
+
+    return src_seq, src_sequence_length, trg_seq, trg_sequence_length, lbl_seq
+
+
 def train():
     train_feed_list, loss = seq_to_seq_net(
         word_vector_dim=args.word_vector_dim,
@@ -459,10 +487,28 @@ def train():
         zip(gradients, trainable_params), global_step=global_step)
 
     src_dict, trg_dict = paddle.dataset.wmt14.get_dict(args.dict_size)
+
     train_batch_generator = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
         batch_size=args.batch_size)
+
+    test_batch_generator = paddle.batch(
+        paddle.reader.shuffle(
+            paddle.dataset.wmt14.test(args.dict_size), buf_size=1000),
+        batch_size=args.batch_size)
+
+    def do_validataion():
+        total_loss = 0.0
+        count = 0
+        for batch_id, data in enumerate(test_batch_generator()):
+            adapted_batch_data = adapt_batch_data(data)
+            outputs = sess.run(
+                [loss],
+                feed_dict=dict(zip(*[train_feed_list, adapted_batch_data])))
+            total_loss += outputs[0]
+            count += 1
+        return total_loss / count
 
     config = tf.ConfigProto(
         intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
@@ -472,47 +518,24 @@ def train():
         sess.run(init_l)
         sess.run(init_g)
         for pass_id in xrange(args.pass_number):
+            pass_start_time = time.time()
+            words_seen = 0
             for batch_id, data in enumerate(train_batch_generator()):
-                src_seq = map(lambda x: x[0], data)
-                trg_seq = map(lambda x: x[1], data)
-                lbl_seq = map(lambda x: x[2], data)
-
-                src_sequence_length = np.array(
-                    [len(seq) for seq in src_seq]).astype('int32')
-                src_seq_maxlen = np.max(src_sequence_length)
-                trg_sequence_length = np.array(
-                    [len(seq) for seq in trg_seq]).astype('int32')
-                trg_seq_maxlen = np.max(trg_sequence_length)
-
-                src_seq = np.array([
-                    padding_data(seq, src_seq_maxlen, END_TOKEN_IDX)
-                    for seq in src_seq
-                ]).astype('int32')
-                trg_seq = np.array([
-                    padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
-                    for seq in trg_seq
-                ]).astype('int32')
-                lbl_seq = np.array([
-                    padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
-                    for seq in lbl_seq
-                ]).astype('int32')
-
-                outputs = sess.run([updates, loss],
-                                   feed_dict={
-                                       train_feed_list[0]: src_seq,
-                                       train_feed_list[1]: src_sequence_length,
-                                       train_feed_list[2]: trg_seq,
-                                       train_feed_list[3]: trg_sequence_length,
-                                       train_feed_list[4]: lbl_seq
-                                   })
-
-                print("pass_id=%d, batch_id=%d, loss=%f" %
+                adapted_batch_data = adapt_batch_data(data)
+                words_seen += np.sum(adapted_batch_data[1])
+                words_seen += np.sum(adapted_batch_data[3])
+                outputs = sess.run(
+                    [updates, loss],
+                    feed_dict=dict(
+                        zip(*[train_feed_list, adapted_batch_data])))
+                print("pass_id=%d, batch_id=%d, train_loss: %f" %
                       (pass_id, batch_id, outputs[1]))
-
-                if global_step.eval() % args.save_freq == 0:
-                    print('Saving model..')
-                    checkpoint_path = os.path.join(args.model_dir, 'tf_seq2seq')
-                    save(sess, checkpoint_path, global_step=global_step)
+            pass_end_time = time.time()
+            test_loss = do_validataion()
+            time_consumed = pass_end_time - pass_start_time
+            words_per_sec = words_seen / time_consumed
+            print("pass_id=%d, test_loss: %f, words/s: %f, sec/pass: %f" %
+                  (pass_id, test_loss, words_per_sec, time_consumed))
 
 
 def infer():
