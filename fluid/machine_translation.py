@@ -106,13 +106,16 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
                                              act='tanh',
                                              bias_attr=True)
         forward, _ = fluid.layers.dynamic_lstm(
-            input=input_forward_proj, size=gate_size * 4)
+            input=input_forward_proj, size=gate_size * 4, use_peepholes=False)
         input_reversed_proj = fluid.layers.fc(input=input_seq,
                                               size=gate_size * 4,
                                               act='tanh',
                                               bias_attr=True)
         reversed, _ = fluid.layers.dynamic_lstm(
-            input=input_reversed_proj, size=gate_size * 4, is_reverse=True)
+            input=input_reversed_proj,
+            size=gate_size * 4,
+            is_reverse=True,
+            use_peepholes=False)
         return forward, reversed
 
     src_word_idx = fluid.layers.data(
