@@ -81,27 +81,35 @@ def main():
         else:
             data_shape = [224, 224, 3]
 
+    # Input data
     images = fluid.layers.data(name='pixel', shape=data_shape, dtype='float32')
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
 
+    # Train program
     net = vgg16_bn_drop(images)
     predict = fluid.layers.fc(input=net, size=classdim, act='softmax')
     cost = fluid.layers.cross_entropy(input=predict, label=label)
     avg_cost = fluid.layers.mean(x=cost)
 
-    optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
-    opts = optimizer.minimize(avg_cost)
-
+    # Evaluator
     accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
 
     # inference program
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
-        test_accuracy = fluid.evaluator.Accuracy(
-            input=predict, label=label, main_program=inference_program)
-        test_target = [avg_cost] + test_accuracy.metrics + test_accuracy.states
-        inference_program = fluid.io.get_inference_program(
-            test_target, main_program=inference_program)
+        test_target = accuracy.metrics + accuracy.states
+        inference_program = fluid.io.get_inference_program(test_target)
+
+    # Optimization
+    optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
+    opts = optimizer.minimize(avg_cost)
+
+    # Initialize executor
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    exe = fluid.Executor(place)
+
+    # Parameter initialization
+    exe.run(fluid.default_startup_program())
 
     # data reader
     train_reader = paddle.batch(
@@ -117,7 +125,7 @@ def main():
 
     # test
     def test(exe):
-        test_accuracy.reset(exe)
+        accuracy.reset(exe)
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
@@ -126,15 +134,9 @@ def main():
 
             exe.run(inference_program,
                     feed={"pixel": img_data,
-                          "label": y_data},
-                    fetch_list=[avg_cost] + test_accuracy.metrics)
+                          "label": y_data})
 
-        return test_accuracy.eval(exe)
-
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
-    exe = fluid.Executor(place)
-
-    exe.run(fluid.default_startup_program())
+        return accuracy.eval(exe)
 
     iters = 0
     for pass_id in range(args.num_passes):
@@ -154,14 +156,18 @@ def main():
                                 fetch_list=[avg_cost] + accuracy.metrics)
             iters += 1
             num_samples += len(data)
-            print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
-                  (pass_id, iters, loss, acc))
-        pass_elapsed = time.time() - start_time
+            print(
+                "Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
+                (pass_id, iters, loss, acc)
+            )  # The accuracy is the accumulation of batches, but not the current batch.
 
+        pass_elapsed = time.time() - start_time
+        pass_train_acc = accuracy.eval(exe)
         pass_test_acc = test(exe)
         print(
-            "Pass = %d, Training performance = %f imgs/s, Test accuracy = %f\n"
-            % (pass_id, num_samples / pass_elapsed, pass_test_acc))
+            "Pass = %d, Training performance = %f imgs/s, Train accuracy = %f, Test accuracy = %f\n"
+            % (pass_id, num_samples / pass_elapsed, pass_train_acc,
+               pass_test_acc))
 
 
 def print_arguments():
