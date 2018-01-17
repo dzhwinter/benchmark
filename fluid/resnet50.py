@@ -198,7 +198,7 @@ def run_benchmark(model, args):
             buf_size=5120),
         batch_size=args.batch_size)
 
-    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
