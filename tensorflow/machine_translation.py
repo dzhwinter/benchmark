@@ -372,8 +372,13 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
             average_across_batch=True)
 
         # return feeding list and loss operator
-        return (src_word_idx, src_sequence_length, trg_word_idx,
-                trg_sequence_length, lbl_word_idx), loss
+        return {
+            'src_word_idx': src_word_idx,
+            'src_sequence_length': src_sequence_length,
+            'trg_word_idx': trg_word_idx,
+            'trg_sequence_length': trg_sequence_length,
+            'lbl_word_idx': lbl_word_idx
+        }, loss
     else:
         start_tokens = tf.ones([tf.shape(src_word_idx)[0], ],
                                tf.int32) * START_TOKEN_IDX
@@ -398,8 +403,12 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
             #impute_finished=True,# error occurs
             maximum_iterations=max_generation_length)
 
-        return (src_word_idx,
-                src_sequence_length), decoder_outputs_decode.predicted_ids
+        predicted_ids = decoder_outputs_decode.predicted_ids
+
+        return {
+            'src_word_idx': src_word_idx,
+            'src_sequence_length': src_sequence_length
+        }, predicted_ids
 
 
 def print_arguments(args):
@@ -452,11 +461,17 @@ def adapt_batch_data(data):
         [padding_data(seq, trg_seq_maxlen, END_TOKEN_IDX)
          for seq in lbl_seq]).astype('int32')
 
-    return src_seq, src_sequence_length, trg_seq, trg_sequence_length, lbl_seq
+    return {
+        'src_word_idx': src_seq,
+        'src_sequence_length': src_sequence_length,
+        'trg_word_idx': trg_seq,
+        'trg_sequence_length': trg_sequence_length,
+        'lbl_word_idx': lbl_seq
+    }
 
 
 def train():
-    train_feed_list, loss = seq_to_seq_net(
+    feeding_dict, loss = seq_to_seq_net(
         embedding_dim=args.embedding_dim,
         encoder_size=args.encoder_size,
         decoder_size=args.decoder_size,
@@ -494,9 +509,11 @@ def train():
         count = 0
         for batch_id, data in enumerate(test_batch_generator()):
             adapted_batch_data = adapt_batch_data(data)
-            outputs = sess.run(
-                [loss],
-                feed_dict=dict(zip(*[train_feed_list, adapted_batch_data])))
+            outputs = sess.run([loss],
+                               feed_dict={
+                                   item[1]: adapt_batch_data[item[0]]
+                                   for item in feeding_dict.items()
+                               })
             total_loss += outputs[0]
             count += 1
         return total_loss / count
@@ -513,12 +530,13 @@ def train():
             words_seen = 0
             for batch_id, data in enumerate(train_batch_generator()):
                 adapted_batch_data = adapt_batch_data(data)
-                words_seen += np.sum(adapted_batch_data[1])
-                words_seen += np.sum(adapted_batch_data[3])
-                outputs = sess.run(
-                    [updates, loss],
-                    feed_dict=dict(
-                        zip(*[train_feed_list, adapted_batch_data])))
+                words_seen += np.sum(adapted_batch_data['src_sequence_length'])
+                words_seen += np.sum(adapted_batch_data['trg_sequence_length'])
+                outputs = sess.run([updates, loss],
+                                   feed_dict={
+                                       item[1]: adapted_batch_data[item[0]]
+                                       for item in feeding_dict.items()
+                                   })
                 print("pass_id=%d, batch_id=%d, train_loss: %f" %
                       (pass_id, batch_id, outputs[1]))
             pass_end_time = time.time()
@@ -530,7 +548,7 @@ def train():
 
 
 def infer():
-    infer_feed_list, predicted_ids = seq_to_seq_net(
+    feeding_dict, predicted_ids = seq_to_seq_net(
         embedding_dim=args.embedding_dim,
         encoder_size=args.encoder_size,
         decoder_size=args.decoder_size,
@@ -567,8 +585,9 @@ def infer():
 
             outputs = sess.run([predicted_ids],
                                feed_dict={
-                                   infer_feed_list[0].name: src_seq,
-                                   infer_feed_list[1].name: src_sequence_length
+                                   feeding_dict['src_word_idx']: src_seq,
+                                   feeding_dict['src_sequence_length']:
+                                   src_sequence_length
                                })
 
             print("\nDecoder result comparison: ")
