@@ -167,7 +167,6 @@ def run_benchmark(model, args):
     if args.use_cprof:
         pr = cProfile.Profile()
         pr.enable()
-    start_time = time.time()
 
     if args.data_set == "cifar10":
         class_dim = 10
@@ -210,6 +209,7 @@ def run_benchmark(model, args):
         label = label.reshape([-1, 1])
 
     im_num = 0
+    start_time = time.time()
     for pass_id in range(args.pass_num):
         every_pass_loss = []
         every_pass_acc = []
