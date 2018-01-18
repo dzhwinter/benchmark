@@ -95,7 +95,6 @@ def lstm_step(x_t, hidden_t_prev, cell_t_prev, size):
 def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
                    target_dict_dim, is_generating, beam_size, max_length):
     """Construct a seq2seq network."""
-    feeding_list = ["source_sequence", "target_sequence", "label_sequence"]
 
     def bi_lstm_encoder(input_seq, gate_size):
         # Linear transformation part for input gate, output gate, forget gate
@@ -119,7 +118,7 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
         return forward, reversed
 
     src_word_idx = fluid.layers.data(
-        name=feeding_list[0], shape=[1], dtype='int64', lod_level=1)
+        name='source_sequence', shape=[1], dtype='int64', lod_level=1)
 
     src_embedding = fluid.layers.embedding(
         input=src_word_idx,
@@ -197,7 +196,7 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
 
     if not is_generating:
         trg_word_idx = fluid.layers.data(
-            name=feeding_list[1], shape=[1], dtype='int64', lod_level=1)
+            name='target_sequence', shape=[1], dtype='int64', lod_level=1)
 
         trg_embedding = fluid.layers.embedding(
             input=trg_word_idx,
@@ -207,11 +206,12 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
         prediction = lstm_decoder_with_attention(trg_embedding, encoded_vector,
                                                  encoded_proj, decoder_boot,
                                                  decoder_size)
-
         label = fluid.layers.data(
-            name=feeding_list[2], shape=[1], dtype='int64', lod_level=1)
+            name='label_sequence', shape=[1], dtype='int64', lod_level=1)
         cost = fluid.layers.cross_entropy(input=prediction, label=label)
         avg_cost = fluid.layers.mean(x=cost)
+
+        feeding_list = ["source_sequence", "target_sequence", "label_sequence"]
 
         return avg_cost, feeding_list
 
@@ -278,11 +278,14 @@ def train():
             trg_seq = to_lodtensor(map(lambda x: x[1], data), place)[0]
             lbl_seq = to_lodtensor(map(lambda x: x[2], data), place)[0]
 
-            fetch_outs = exe.run(
-                inference_program,
-                feed=dict(zip(*[feeding_list, (src_seq, trg_seq, lbl_seq)])),
-                fetch_list=[avg_cost],
-                return_numpy=False)
+            fetch_outs = exe.run(inference_program,
+                                 feed={
+                                     feeding_list[0]: src_seq,
+                                     feeding_list[1]: trg_seq,
+                                     feeding_list[2]: lbl_seq
+                                 },
+                                 fetch_list=[avg_cost],
+                                 return_numpy=False)
 
             total_loss += lodtensor_to_ndarray(fetch_outs[0])[0]
             count += 1
@@ -299,10 +302,13 @@ def train():
             words_seen += word_num
             lbl_seq, _ = to_lodtensor(map(lambda x: x[2], data), place)
 
-            fetch_outs = exe.run(
-                framework.default_main_program(),
-                feed=dict(zip(*[feeding_list, (src_seq, trg_seq, lbl_seq)])),
-                fetch_list=[avg_cost])
+            fetch_outs = exe.run(framework.default_main_program(),
+                                 feed={
+                                     feeding_list[0]: src_seq,
+                                     feeding_list[1]: trg_seq,
+                                     feeding_list[2]: lbl_seq
+                                 },
+                                 fetch_list=[avg_cost])
 
             avg_cost_val = np.array(fetch_outs[0])
             print('pass_id=%d, batch_id=%d, train_loss: %f' %
