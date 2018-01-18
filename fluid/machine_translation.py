@@ -102,14 +102,14 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
         # So the output size is 4 times of gate_size.
         input_forward_proj = fluid.layers.fc(input=input_seq,
                                              size=gate_size * 4,
-                                             act='tanh',
-                                             bias_attr=True)
+                                             act=None,
+                                             bias_attr=False)
         forward, _ = fluid.layers.dynamic_lstm(
             input=input_forward_proj, size=gate_size * 4, use_peepholes=False)
         input_reversed_proj = fluid.layers.fc(input=input_seq,
                                               size=gate_size * 4,
-                                              act='tanh',
-                                              bias_attr=True)
+                                              act=None,
+                                              bias_attr=False)
         reversed, _ = fluid.layers.dynamic_lstm(
             input=input_reversed_proj,
             size=gate_size * 4,
