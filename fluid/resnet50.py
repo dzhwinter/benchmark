@@ -167,7 +167,6 @@ def run_benchmark(model, args):
     if args.use_cprof:
         pr = cProfile.Profile()
         pr.enable()
-    start_time = time.time()
 
     if args.data_set == "cifar10":
         class_dim = 10
@@ -209,14 +208,18 @@ def run_benchmark(model, args):
         label = np.array(map(lambda x: x[1], data)).astype('int64')
         label = label.reshape([-1, 1])
 
-    iter = 0
     im_num = 0
+    start_time = time.time()
     for pass_id in range(args.pass_num):
+        every_pass_loss = []
+        every_pass_acc = []
         accuracy.reset(exe)
-        if iter == args.iterations:
-            break
+        iter = 0
         for batch_id, data in enumerate(train_reader()):
-            if iter == args.skip_batch_num:
+            if iter < args.skip_batch_num:
+                iter += 1
+                continue
+            if pass_id == 0 and iter == args.skip_batch_num:
                 start_time = time.time()
             if iter == args.iterations:
                 break
@@ -229,16 +232,18 @@ def run_benchmark(model, args):
                                 feed={'data': image,
                                       'label': label},
                                 fetch_list=[avg_cost] + accuracy.metrics)
+            every_pass_acc.append(acc)
+            every_pass_loss.append(loss)
             pass_acc = accuracy.eval(exe)
-            print("Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
-                  (iter, str(loss), str(acc), str(pass_acc)))
+            print("Pass: %d, Iter: %d, loss: %s, acc: %s, pass_acc: %s" %
+                  (pass_id, iter, str(loss), str(acc), str(pass_acc)))
             iter += 1
             im_num += label.shape[0]
-
+        print("Pass: %d, Loss: %f, Accuray: %f\n" %
+              (pass_id, np.mean(every_pass_loss), np.mean(every_pass_acc)))
     duration = time.time() - start_time
-    im_num = im_num - args.skip_batch_num * args.batch_size
     examples_per_sec = im_num / duration
-    sec_per_batch = duration / (iter - args.skip_batch_num)
+    sec_per_batch = duration / (iter - args.skip_batch_num) / args.pass_num
 
     print('\nTotal examples: %d, total time: %.5f' % (im_num, duration))
     print('%.5f examples/sec, %.5f sec/batch \n' %
