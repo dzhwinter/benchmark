@@ -130,9 +130,10 @@ def main():
     exe.run(fluid.default_startup_program())
 
     def train_loop(pass_num, crop_size):
-        cache = crop_sentence(imdb.train(word_dict), crop_size)
         for pass_id in range(pass_num):
-            train_reader = batch(cache, batch_size=args.batch_size)
+            train_reader = batch(
+                crop_sentence(imdb.train(word_dict), crop_size),
+                batch_size=args.batch_size)
 
             pass_start_time = time.time()
             for batch_id, data in enumerate(train_reader()):
