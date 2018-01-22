@@ -197,6 +197,8 @@ def run_benchmark(model, args):
         test_target = accuracy.metrics + accuracy.states
         inference_program = fluid.io.get_inference_program(test_target)
 
+    fluid.memory_optimize(fluid.default_main_program())
+
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.cifar.train10()
