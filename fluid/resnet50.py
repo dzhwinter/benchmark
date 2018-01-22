@@ -190,6 +190,8 @@ def run_benchmark(model, args):
     opts = optimizer.minimize(avg_cost)
     accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
 
+    fluid.memory_optimize(fluid.default_main_program())
+
     train_reader = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.cifar.train10()
