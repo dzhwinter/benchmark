@@ -262,7 +262,7 @@ def run_benchmark(model, args):
                                 feed={'data': image,
                                       'label': label},
                                 fetch_list=[avg_cost] + accuracy.metrics)
-            if iter >= args.skip_batch_num:
+            if iter >= args.skip_batch_num or pass_id != 0:
                 batch_duration = time.time() - batch_start
                 pass_duration += batch_duration
                 im_num += label.shape[0]
@@ -282,7 +282,7 @@ def run_benchmark(model, args):
 
     if total_train_time > 0.0 and iter != args.skip_batch_num:
         examples_per_sec = im_num / total_train_time
-        sec_per_batch = total_train_time / (iter - args.skip_batch_num) / args.pass_num
+        sec_per_batch = total_train_time / (iter * args.pass_num - args.skip_batch_num)
 
         print('\nTotal examples: %d, total time: %.5f' % (im_num, total_train_time))
         print('%.5f examples/sec, %.5f sec/batch \n' %
