@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
     parser.add_argument(
-        '--log_dir', '-f', type=str,default='./', help='the path of the log file')
+        '--log_dir', '-f', type=str, default='./', help='The path of the log file')
     parser.add_argument(
         '--use_fake_data',
         action='store_true',
@@ -248,12 +248,9 @@ def run_benchmark(model, args):
         every_pass_loss = []
         accuracy.reset(exe)
         iter = 0
+        pass_duration = 0.0
         for batch_id, data in enumerate(train_reader()):
-            if iter < args.skip_batch_num:
-                iter += 1
-                continue
-            if iter == args.skip_batch_num:
-                pass_start = time.time()
+            batch_start = time.time()
             if iter == args.iterations:
                 break
             if not args.use_fake_data:
@@ -265,6 +262,10 @@ def run_benchmark(model, args):
                                 feed={'data': image,
                                       'label': label},
                                 fetch_list=[avg_cost] + accuracy.metrics)
+            if iter >= args.skip_batch_num:
+                batch_duration = time.time() - batch_start
+                pass_duration += batch_duration
+                im_num += label.shape[0]
             every_pass_loss.append(loss)
             print("Pass: %d, Iter: %d, loss: %s, acc: %s" %
                   (pass_id, iter, str(loss), str(acc)))
@@ -272,20 +273,20 @@ def run_benchmark(model, args):
             scalar1.add_record(total_iters, acc)
             iter += 1
             total_iters += 1
-            im_num += label.shape[0]
-        pass_duration = time.time() - pass_start
+
         total_train_time += pass_duration
         pass_train_acc = accuracy.eval(exe)
         pass_test_acc = test(exe)
-        print("Pass: %d, Loss: %f, Train Accuray: %f, Test Accuray: %f, Duration: %f\n" %
+        print("Pass: %d, Loss: %f, Train Accuray: %f, Test Accuray: %f, Handle Images Duration: %f\n" %
               (pass_id, np.mean(every_pass_loss), pass_train_acc, pass_test_acc, pass_duration))
 
-    examples_per_sec = im_num / total_train_time
-    sec_per_batch = total_train_time / (iter - args.skip_batch_num) / args.pass_num
+    if total_train_time > 0.0 and iter != args.skip_batch_num:
+        examples_per_sec = im_num / total_train_time
+        sec_per_batch = total_train_time / (iter - args.skip_batch_num) / args.pass_num
 
-    print('\nTotal examples: %d, total time: %.5f' % (im_num, total_train_time))
-    print('%.5f examples/sec, %.5f sec/batch \n' %
-          (examples_per_sec, sec_per_batch))
+        print('\nTotal examples: %d, total time: %.5f' % (im_num, total_train_time))
+        print('%.5f examples/sec, %.5f sec/batch \n' %
+              (examples_per_sec, sec_per_batch))
 
     if args.use_cprof:
         pr.disable()
