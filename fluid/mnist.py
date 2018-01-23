@@ -12,7 +12,7 @@ import paddle.v2.fluid.profiler as profiler
 
 from visualdl import LogWriter
 
-logwriter = LogWriter("./tmp", sync_cycle=10)
+logwriter = LogWriter("./tmp", sync_cycle=100)
 with logwriter.mode("train") as writer:
     loss_scalar = writer.scalar("loss")
     acc_scalar = writer.scalar("acc")
