@@ -511,7 +511,7 @@ def train():
             adapted_batch_data = adapt_batch_data(data)
             outputs = sess.run([loss],
                                feed_dict={
-                                   item[1]: adapt_batch_data[item[0]]
+                                   item[1]: adapted_batch_data[item[0]]
                                    for item in feeding_dict.items()
                                })
             total_loss += outputs[0]
