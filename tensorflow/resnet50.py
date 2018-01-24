@@ -407,9 +407,7 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
               (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
 
     config = tf.ConfigProto(
-        intra_op_parallelism_threads=1,
-        inter_op_parallelism_threads=1,
-        log_device_placement=True)
+        intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
