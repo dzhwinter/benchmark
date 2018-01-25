@@ -9,6 +9,7 @@ import paddle.v2.fluid as fluid
 import paddle.v2.fluid.core as core
 import argparse
 import functools
+from visualdl import LogWriter
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
@@ -37,6 +38,21 @@ parser.add_argument(
     default='cifar10',
     choices=['cifar10', 'flowers'],
     help='Optional dataset for benchmark.')
+parser.add_argument(
+    '--log_dir',
+    type=str,
+    default='./',
+    help='visual output')
+parser.add_argument(
+    '--sync_cycle',
+    type=int,
+    default=100,
+    help='sync duration')
+parser.add_argument(
+    '--sample_rate',
+    type=int,
+    default=100,
+    help='visual sample rate')
 args = parser.parse_args()
 
 
@@ -70,32 +86,46 @@ def vgg16_bn_drop(input):
 def main():
     if args.data_set == "cifar10":
         classdim = 10
-        data_shape = [3, 32, 32]
+        if args.data_format == 'NCHW':
+            data_shape = [3, 32, 32]
+        else:
+            data_shape = [32, 32, 3]
     else:
         classdim = 102
-        data_shape = [3, 224, 224]
+        if args.data_format == 'NCHW':
+            data_shape = [3, 224, 224]
+        else:
+            data_shape = [224, 224, 3]
 
+    # Input data
     images = fluid.layers.data(name='pixel', shape=data_shape, dtype='float32')
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
 
+    # Train program
     net = vgg16_bn_drop(images)
     predict = fluid.layers.fc(input=net, size=classdim, act='softmax')
     cost = fluid.layers.cross_entropy(input=predict, label=label)
     avg_cost = fluid.layers.mean(x=cost)
 
-    optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
-    opts = optimizer.minimize(avg_cost)
-
+    # Evaluator
     accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
 
     # inference program
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
-        test_accuracy = fluid.evaluator.Accuracy(
-            input=predict, label=label, main_program=inference_program)
-        test_target = [avg_cost] + test_accuracy.metrics + test_accuracy.states
-        inference_program = fluid.io.get_inference_program(
-            test_target, main_program=inference_program)
+        test_target = accuracy.metrics + accuracy.states
+        inference_program = fluid.io.get_inference_program(test_target)
+
+    # Optimization
+    optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
+    opts = optimizer.minimize(avg_cost)
+
+    # Initialize executor
+    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    exe = fluid.Executor(place)
+
+    # Parameter initialization
+    exe.run(fluid.default_startup_program())
 
     # data reader
     train_reader = paddle.batch(
@@ -111,7 +141,7 @@ def main():
 
     # test
     def test(exe):
-        test_accuracy.reset(exe)
+        accuracy.reset(exe)
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
@@ -120,32 +150,23 @@ def main():
 
             exe.run(inference_program,
                     feed={"pixel": img_data,
-                          "label": y_data},
-                    fetch_list=[avg_cost] + test_accuracy.metrics)
+                          "label": y_data})
 
-        return test_accuracy.eval(exe)
+        return accuracy.eval(exe)
 
-    def eval_test(ext, accuracy, avg_cost):
-        accuracy.reset(exe)
-        for batch_id, data in enumerate(test_reader()):
-            img_data = np.array(map(lambda x: x[0].reshape(data_shape),
-                                    data)).astype("float32")
-            y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-            y_data = y_data.reshape([-1, 1])
-            exe.run(fluid.default_main_program(),
-                    feed={"pixel": img_data,
-                          "label": y_data},
-                    fetch_list=[avg_cost] + accuracy.metrics)
-        pass_acc = accuracy.eval(exe)
-        return pass_acc
-        
+    # init LogWriter
+    logw = LogWriter(args.log_dir, args.sync_cycle)
 
-    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
-    exe = fluid.Executor(place)
+    # create scalars in mode train and test.
+    with logw.mode('loss') as logger:
+        scalar0 = logger.scalar("paddle_vgg16_%s_%s_%d/scalar" % (args.device, args.data_set, args.batch_size))
 
-    exe.run(fluid.default_startup_program())
+    with logw.mode('acc') as logger:
+        scalar1 = logger.scalar("paddle_vgg16_%s_%s_%d/scalar" % (args.device, args.data_set, args.batch_size))
+ 
 
     iters = 0
+    step = 0
     for pass_id in range(args.num_passes):
         # train
         start_time = time.time()
@@ -163,15 +184,22 @@ def main():
                                 fetch_list=[avg_cost] + accuracy.metrics)
             iters += 1
             num_samples += len(data)
-            print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
-                  (pass_id, iters, loss, acc))
-        pass_elapsed = time.time() - start_time
+            if  step % args.sample_rate == 0:
+                scalar0.add_record(step, loss)
+                scalar1.add_record(step, acc)
+            step += 1
+            print(
+                "Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
+                (pass_id, iters, loss, acc)
+            )  # The accuracy is the accumulation of batches, but not the current batch.
 
-        pass_test_acc = eval_test(exe, accuracy, avg_cost)
-        pass_acc = accuracy.eval(exe)
+        pass_elapsed = time.time() - start_time
+        pass_train_acc = accuracy.eval(exe)
+        pass_test_acc = test(exe)
         print(
-            "Pass = %d, Training performance = %f imgs/s, pass_test_acc = %f, pass_acc = %f\n"
-            % (pass_id, num_samples / pass_elapsed, pass_test_acc, pass_acc))
+            "Pass = %d, Training performance = %f imgs/s, Train accuracy = %f, Test accuracy = %f\n"
+            % (pass_id, num_samples / pass_elapsed, pass_train_acc,
+               pass_test_acc))
 
 
 def print_arguments():
