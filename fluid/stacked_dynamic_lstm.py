@@ -9,6 +9,7 @@ import random
 import time
 
 import numpy
+import paddle.v2 as paddle
 import paddle.v2.dataset.imdb as imdb
 import paddle.v2.fluid as fluid
 from paddle.v2 import batch
@@ -132,7 +133,9 @@ def main():
     def train_loop(pass_num, crop_size):
         for pass_id in range(pass_num):
             train_reader = batch(
-                crop_sentence(imdb.train(word_dict), crop_size),
+                paddle.reader.shuffle(
+                    crop_sentence(imdb.train(word_dict), crop_size),
+                    buf_size=25000),
                 batch_size=args.batch_size)
 
             pass_start_time = time.time()
