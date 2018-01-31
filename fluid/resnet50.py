@@ -190,7 +190,7 @@ def run_benchmark(model, args):
     opts = optimizer.minimize(avg_cost)
     accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
 
-    fluid.memory_optimize(fluid.default_main_program())
+    # fluid.memory_optimize(fluid.default_main_program())
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
@@ -230,10 +230,11 @@ def run_benchmark(model, args):
                                      data)).astype('float32')
                 label = np.array(map(lambda x: x[1], data)).astype('int64')
                 label = label.reshape([-1, 1])
-            loss, acc = exe.run(fluid.default_main_program(),
-                                feed={'data': image,
-                                      'label': label},
-                                fetch_list=[avg_cost] + accuracy.metrics)
+            with profiler.profiler(args.device, 'total') as prof:
+                loss, acc = exe.run(fluid.default_main_program(),
+                                    feed={'data': image,
+                                          'label': label},
+                                    fetch_list=[avg_cost] + accuracy.metrics)
             every_pass_acc.append(acc)
             every_pass_loss.append(loss)
             pass_acc = accuracy.eval(exe)

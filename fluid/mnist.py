@@ -141,37 +141,39 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.dataset.mnist.train(), batch_size=args.batch_size)
 
-    for pass_id in range(args.pass_num):
-        accuracy.reset(exe)
-        pass_start = time.time()
-        for batch_id, data in enumerate(train_reader()):
-            img_data = np.array(
-                map(lambda x: x[0].reshape([1, 28, 28]), data)).astype(DTYPE)
-            y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-            y_data = y_data.reshape([len(y_data), 1])
+    with profiler.profiler(args.device, 'total') as prof:
+        for pass_id in range(args.pass_num):
+            accuracy.reset(exe)
+            pass_start = time.time()
+            for batch_id, data in enumerate(train_reader()):
+                img_data = np.array(
+                    map(lambda x: x[0].reshape([1, 28, 28]), data)).astype(
+                        DTYPE)
+                y_data = np.array(map(lambda x: x[1], data)).astype("int64")
+                y_data = y_data.reshape([len(y_data), 1])
 
-            start = time.time()
-            outs = exe.run(
-                fluid.default_main_program(),
-                feed={"pixel": img_data,
-                      "label": y_data},
-                fetch_list=[avg_cost] + accuracy.metrics
-            )  # The accuracy is the accumulation of batches, but not the current batch.
+                start = time.time()
+                outs = exe.run(
+                    fluid.default_main_program(),
+                    feed={"pixel": img_data,
+                          "label": y_data},
+                    fetch_list=[avg_cost] + accuracy.metrics
+                )  # The accuracy is the accumulation of batches, but not the current batch.
 
-            end = time.time()
-            loss = np.array(outs[0])
-            acc = np.array(outs[1])
-            print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
-                  (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
+                end = time.time()
+                loss = np.array(outs[0])
+                acc = np.array(outs[1])
+                print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
+                      (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
-        pass_end = time.time()
+            pass_end = time.time()
 
-        train_avg_acc = accuracy.eval(exe)
-        test_avg_acc = eval_test(exe, accuracy, inference_program)
+            train_avg_acc = accuracy.eval(exe)
+            test_avg_acc = eval_test(exe, accuracy, inference_program)
 
-        print("pass=%d, train_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
-              (pass_id, train_avg_acc, test_avg_acc,
-               (pass_end - pass_start) / 1000))
+            print("pass=%d, train_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
+                  (pass_id, train_avg_acc, test_avg_acc,
+                   (pass_end - pass_start) / 1000))
 
 
 if __name__ == '__main__':

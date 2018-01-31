@@ -10,6 +10,8 @@ import paddle.v2.fluid.core as core
 import argparse
 import functools
 
+import paddle.v2.fluid.profiler as profiler
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     '--batch_size', type=int, default=128, help="Batch size for training.")
@@ -18,7 +20,7 @@ parser.add_argument(
     type=float,
     default=1e-3,
     help="Learning rate for training.")
-parser.add_argument('--num_passes', type=int, default=50, help="No. of passes.")
+parser.add_argument('--pass_num', type=int, default=50, help="No. of passes.")
 parser.add_argument(
     '--device',
     type=str,
@@ -52,6 +54,7 @@ def vgg16_bn_drop(input):
             conv_with_batchnorm=True,
             conv_batchnorm_drop_rate=dropouts,
             pool_type='max')
+        # use_cudnn=False)
 
     conv1 = conv_block(input, 64, 2, [0.3, 0])
     conv2 = conv_block(conv1, 128, 2, [0.4, 0])
@@ -94,23 +97,24 @@ def main():
     # Evaluator
     accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
 
-    # inference program
-    inference_program = fluid.default_main_program().clone()
-    with fluid.program_guard(inference_program):
-        test_target = accuracy.metrics + accuracy.states
-        inference_program = fluid.io.get_inference_program(test_target)
+    # # inference program
+    # inference_program = fluid.default_main_program().clone()
+    # with fluid.program_guard(inference_program):
+    #     test_target = accuracy.metrics + accuracy.states
+    #     inference_program = fluid.io.get_inference_program(test_target)
 
     # Optimization
     optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
     opts = optimizer.minimize(avg_cost)
 
-    fluid.memory_optimize(fluid.default_main_program())
+    # fluid.memory_optimize(fluid.default_main_program())
 
     # Initialize executor
     place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
 
     # Parameter initialization
+    # with profiler.profiler(args.device, 'total') as prof:
     exe.run(fluid.default_startup_program())
 
     # data reader
@@ -141,7 +145,7 @@ def main():
         return accuracy.eval(exe)
 
     iters = 0
-    for pass_id in range(args.num_passes):
+    for pass_id in range(args.pass_num):
         # train
         start_time = time.time()
         num_samples = 0
@@ -152,10 +156,11 @@ def main():
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
-            loss, acc = exe.run(fluid.default_main_program(),
-                                feed={"pixel": img_data,
-                                      "label": y_data},
-                                fetch_list=[avg_cost] + accuracy.metrics)
+            with profiler.profiler(args.device, 'total') as prof:
+                loss, acc = exe.run(fluid.default_main_program(),
+                                    feed={"pixel": img_data,
+                                          "label": y_data},
+                                    fetch_list=[avg_cost] + accuracy.metrics)
             iters += 1
             num_samples += len(data)
             print(
@@ -165,11 +170,11 @@ def main():
 
         pass_elapsed = time.time() - start_time
         pass_train_acc = accuracy.eval(exe)
-        pass_test_acc = test(exe)
-        print(
-            "Pass = %d, Training performance = %f imgs/s, Train accuracy = %f, Test accuracy = %f\n"
-            % (pass_id, num_samples / pass_elapsed, pass_train_acc,
-               pass_test_acc))
+        # pass_test_acc = test(exe)
+        # print(
+        #     "Pass = %d, Training performance = %f imgs/s, Train accuracy = %f, Test accuracy = %f\n"
+        #     % (pass_id, num_samples / pass_elapsed, pass_train_acc,
+        #        pass_test_acc))
 
 
 def print_arguments():
