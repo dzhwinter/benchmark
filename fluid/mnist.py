@@ -10,6 +10,13 @@ import paddle.v2 as paddle
 import paddle.v2.fluid as fluid
 import paddle.v2.fluid.profiler as profiler
 
+from visualdl import LogWriter
+
+logwriter = LogWriter("./tmp", sync_cycle=100)
+with logwriter.mode("train") as writer:
+    loss_scalar = writer.scalar("loss")
+    acc_scalar = writer.scalar("acc")
+
 SEED = 1
 DTYPE = "float32"
 
@@ -105,6 +112,7 @@ def run_benchmark(model, args):
         pr = cProfile.Profile()
         pr.enable()
     start_time = time.time()
+    step = 0
     # Input data
     images = fluid.layers.data(name='pixel', shape=[1, 28, 28], dtype=DTYPE)
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
@@ -161,6 +169,11 @@ def run_benchmark(model, args):
             end = time.time()
             loss = np.array(outs[0])
             acc = np.array(outs[1])
+
+            loss_scalar.add_record(step, loss)
+            acc_scalar.add_record(step, acc)
+            step += 1
+
             print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
