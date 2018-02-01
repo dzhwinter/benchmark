@@ -19,7 +19,7 @@ parser.add_argument(
     type=float,
     default=1e-3,
     help="Learning rate for training.")
-parser.add_argument('--num_passes', type=int, default=50, help="No. of passes.")
+parser.add_argument('--pass_num', type=int, default=50, help="Number of passes.")
 parser.add_argument(
     '--device',
     type=str,
@@ -42,17 +42,17 @@ parser.add_argument(
     '--log_dir',
     type=str,
     default='./',
-    help='visual output')
+    help='VisualDL  output path')
 parser.add_argument(
     '--sync_cycle',
     type=int,
     default=100,
-    help='sync duration')
+    help='Synchronize duraion')
 parser.add_argument(
     '--sample_rate',
     type=int,
     default=100,
-    help='visual sample rate')
+    help='VisualDL sample rate')
 args = parser.parse_args()
 
 
@@ -167,7 +167,6 @@ def main():
         scalar1 = logger.scalar("paddle_vgg16_%s_%s_%d/scalar" % (args.device, args.data_set, args.batch_size))
 
     iters = 0
-    step = 0
     for pass_id in range(args.num_passes):
         # train
         start_time = time.time()
@@ -186,9 +185,8 @@ def main():
             iters += 1
             num_samples += len(data)
             if  step % args.sample_rate == 0:
-                scalar0.add_record(step, loss)
-                scalar1.add_record(step, acc)
-            step += 1
+                scalar0.add_record(iters, loss)
+                scalar1.add_record(iters, acc)
             print(
                 "Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                 (pass_id, iters, loss, acc)
