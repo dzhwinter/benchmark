@@ -470,10 +470,10 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
             if args.with_test:
                 pass_test_acc = test()
                 print("Pass: %d, Loss: %f, Train Accuray: %f, Test Accuray: %f, Duration: %f\n" %
-                      (pass_id, np.mean(train_losses), np.mean(train_accs), pass_test_acc, total_train_time))
+                      (pass_id, np.mean(train_losses), np.mean(train_accs), pass_test_acc, pass_duration))
             else:
                 print("Pass: %d, Loss: %f, Train Accuray: %f, Duration: %f\n" %
-                      (pass_id, np.mean(train_losses), np.mean(train_accs), total_train_time))
+                      (pass_id, np.mean(train_losses), np.mean(train_accs), pass_duration))
         if total_train_time > 0.0 and iters != args.skip_batch_num:
             examples_per_sec = num_samples / total_train_time
             sec_per_batch = total_train_time / (iters * args.pass_num - args.skip_batch_num)
