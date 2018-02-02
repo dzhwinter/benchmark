@@ -258,13 +258,9 @@ def train():
 
     fluid.memory_optimize(fluid.default_main_program())
 
-    # train_batch_generator = paddle.batch(
-    #     paddle.reader.shuffle(
-    #         paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
-    #     batch_size=args.batch_size)
-
     train_batch_generator = paddle.batch(
-            paddle.dataset.wmt14.train(args.dict_size),
+        paddle.reader.shuffle(
+            paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
         batch_size=args.batch_size)
 
     test_batch_generator = paddle.batch(
