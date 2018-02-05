@@ -9,6 +9,7 @@ import paddle.v2.fluid as fluid
 import paddle.v2.fluid.core as core
 import argparse
 import functools
+from visualdl import LogWriter
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
@@ -18,7 +19,7 @@ parser.add_argument(
     type=float,
     default=1e-3,
     help="Learning rate for training.")
-parser.add_argument('--num_passes', type=int, default=50, help="No. of passes.")
+parser.add_argument('--pass_num', type=int, default=50, help="Number of passes.")
 parser.add_argument(
     '--device',
     type=str,
@@ -37,6 +38,21 @@ parser.add_argument(
     default='cifar10',
     choices=['cifar10', 'flowers'],
     help='Optional dataset for benchmark.')
+parser.add_argument(
+    '--log_dir',
+    type=str,
+    default='./',
+    help='VisualDL  output path')
+parser.add_argument(
+    '--sync_cycle',
+    type=int,
+    default=100,
+    help='Synchronize duraion')
+parser.add_argument(
+    '--sample_rate',
+    type=int,
+    default=100,
+    help='VisualDL sample rate')
 args = parser.parse_args()
 
 
@@ -140,6 +156,16 @@ def main():
 
         return accuracy.eval(exe)
 
+    # init LogWriter
+    logw = LogWriter(args.log_dir, args.sync_cycle)
+
+    # create scalars in mode train and test.
+    with logw.mode('loss') as logger:
+        scalar0 = logger.scalar("paddle_vgg16_%s_%s_%d/scalar" % (args.device, args.data_set, args.batch_size))
+
+    with logw.mode('acc') as logger:
+        scalar1 = logger.scalar("paddle_vgg16_%s_%s_%d/scalar" % (args.device, args.data_set, args.batch_size))
+
     iters = 0
     for pass_id in range(args.num_passes):
         # train
@@ -158,6 +184,9 @@ def main():
                                 fetch_list=[avg_cost] + accuracy.metrics)
             iters += 1
             num_samples += len(data)
+            if  step % args.sample_rate == 0:
+                scalar0.add_record(iters, loss)
+                scalar1.add_record(iters, acc)
             print(
                 "Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                 (pass_id, iters, loss, acc)
