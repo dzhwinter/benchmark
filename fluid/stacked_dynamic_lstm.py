@@ -163,7 +163,8 @@ def main():
                 pass_end_time = time.time()
                 time_consumed = pass_end_time - pass_start_time
                 words_per_sec = word_nums / time_consumed
-                print("pass_id=%d, sec/pass: %f, words/s: %f" % (pass_id, time_consumed, words_per_sec))
+                print("pass_id=%d, sec/pass: %f, words/s: %f" % 
+                    (pass_id, time_consumed, words_per_sec))
             
 
     train_loop(args.pass_num, args.crop_size)
@@ -174,7 +175,7 @@ def to_lodtensor(data, place):
     cur_len = 0
     lod = [cur_len]
     for l in seq_lens:       
-    cur_len += l
+        cur_len += l
         lod.append(cur_len)
     flattened_data = numpy.concatenate(data, axis=0).astype("int64")
     flattened_data = flattened_data.reshape([len(flattened_data), 1])
