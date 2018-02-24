@@ -13,7 +13,7 @@ import paddle.v2 as paddle
 import paddle.v2.dataset.imdb as imdb
 import paddle.v2.fluid as fluid
 from paddle.v2 import batch
-
+import paddle.v2.fluid.profiler as profiler
 
 def parse_args():
     parser = argparse.ArgumentParser("Understand Sentiment by Dynamic RNN.")
@@ -123,6 +123,10 @@ def main():
             name='label', shape=[1], dtype='int64'))
     loss = fluid.layers.mean(x=loss)
 
+    # add acc
+    accuracy = fluid.evaluator.Accuracy(input=logit, label=fluid.layers.data(name='label', \
+                shape=[1], dtype='int64'))
+
     adam = fluid.optimizer.Adam()
     adam.minimize(loss)
 
@@ -133,28 +137,34 @@ def main():
     exe.run(fluid.default_startup_program())
 
     def train_loop(pass_num, crop_size):
-        for pass_id in range(pass_num):
-            train_reader = batch(
-                paddle.reader.shuffle(
+        with profiler.profiler(args.device, 'total') as prof:
+            for pass_id in range(pass_num):
+                train_reader = batch(
+                    paddle.reader.shuffle(
                     crop_sentence(imdb.train(word_dict), crop_size),
                     buf_size=25000),
-                batch_size=args.batch_size)
+                    batch_size=args.batch_size)
+                word_nums = 0
+                pass_start_time = time.time()
+                accuracy.reset(exe)
+                for batch_id, data in enumerate(train_reader()):
+                    tensor_words = to_lodtensor([x[0] for x in data], place)
+                    for x in data:
+                        word_nums += len(x[0])
+                    label = numpy.array([x[1] for x in data]).astype("int64")
+                    label = label.reshape((-1, 1))
+                    loss_np, acc = exe.run(fluid.default_main_program(), 
+                            feed={"words": tensor_words, 
+                            "label": label}, 
+                            fetch_list=[loss] + accuracy.metrics)
+                    print("pass_id=%d, batch_id=%d, loss=%f, acc=%f" % 
+                        (pass_id, batch_id, loss_np, acc))
 
-            pass_start_time = time.time()
-            for batch_id, data in enumerate(train_reader()):
-                tensor_words = to_lodtensor([x[0] for x in data], place)
-                label = numpy.array([x[1] for x in data]).astype("int64")
-                label = label.reshape((-1, 1))
-                loss_np = exe.run(fluid.default_main_program(),
-                                  feed={"words": tensor_words,
-                                        "label": label},
-                                  fetch_list=[loss])[0]
-                print("pass_id=%d, batch_id=%d, loss: %f" %
-                      (pass_id, batch_id, loss_np))
-
-            pass_end_time = time.time()
-            time_consumed = pass_end_time - pass_start_time
-            print("pass_id=%d, sec/pass: %f" % (pass_id, time_consumed))
+                pass_end_time = time.time()
+                time_consumed = pass_end_time - pass_start_time
+                words_per_sec = word_nums / time_consumed
+                print("pass_id=%d, sec/pass: %f, words/s: %f" % (pass_id, time_consumed, words_per_sec))
+            
 
     train_loop(args.pass_num, args.crop_size)
 
@@ -163,8 +173,8 @@ def to_lodtensor(data, place):
     seq_lens = [len(seq) for seq in data]
     cur_len = 0
     lod = [cur_len]
-    for l in seq_lens:
-        cur_len += l
+    for l in seq_lens:       
+    cur_len += l
         lod.append(cur_len)
     flattened_data = numpy.concatenate(data, axis=0).astype("int64")
     flattened_data = flattened_data.reshape([len(flattened_data), 1])
