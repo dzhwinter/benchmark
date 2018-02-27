@@ -16,6 +16,7 @@ import numpy as np
 
 import paddle.v2 as paddle
 import tensorflow as tf
+from visualdl import LogWriter
 
 DTYPE = tf.float32
 
@@ -40,6 +41,8 @@ def parse_args():
         default=5,
         help='The first num of minibatch num to skip, for better performance test'
     )
+    parser.add_argument(
+        '--log_dir', '-f', type=str, default='./', help='The path of the log file')
     parser.add_argument(
         '--iterations',
         type=int,
@@ -84,8 +87,6 @@ def parse_args():
 def print_arguments(args):
     vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
                                 vars(args)['device'] == 'GPU')
-    vars(args)['iterations'] = vars(args)['pass_num'] * 1000 if vars(args)[
-        'with_test'] else vars(args)['iterations']
     print('-----------  Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
@@ -403,8 +404,7 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                     labels: test_labels,
                     is_training: False
                 }))
-        print("Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n" %
-              (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
+        return np.mean(test_accs)
 
     config = tf.ConfigProto(
         intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
@@ -422,16 +422,22 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                     map(lambda x: np.transpose(x[0].reshape(pdshape),
                     axes=[1, 2, 0]), data)).astype("float32")
             labels_data = np.array(map(lambda x: x[1], data)).astype('int64')
-        iters, num_samples, start_time = 0, 0, 0.0
+        iters, num_samples = 0, 0
+        total_train_time = 0.0
+        total_iters = 0
+        logger = LogWriter(args.log_dir, sync_cycle=10)
+        with logger.mode('loss') as logger:
+            scalar0 = logger.scalar("tf_resnet_%s%d/scalar" % (args.device, args.batch_size))
+        with logger.mode('accuracy') as logger:
+            scalar1 = logger.scalar("tf_resnet_%s%d/scalar" % (args.device, args.batch_size))
+
         for pass_id in range(args.pass_num):
-            if iters == args.iterations:
-                break
+            iters = 0
             train_accs = []
             train_losses = []
+            pass_duration = 0.0
             for batch_id, data in enumerate(train_reader()):
-                if iters == args.skip_batch_num:
-                    start_time = time.time()
-                    num_samples = 0
+                batch_start = time.time()
                 if iters == args.iterations:
                     break
                 if not args.use_fake_data:
@@ -446,30 +452,36 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                                             labels: labels_data,
                                             is_training: True
                                         })
+                if iters >= args.skip_batch_num or pass_id != 0:
+                    batch_duration = time.time() - batch_start
+                    pass_duration += batch_duration
+                    num_samples += len(data)
                 iters += 1
+                total_iters += 1
                 train_accs.append(acc)
                 train_losses.append(loss)
-                num_samples += len(data)
-                print("Pass=%d, Batch=%d, Loss=%f, Accuray=%f\n" %
+                print("Pass: %d, Iter: %d, loss: %s, acc: %s" %
                       (pass_id, batch_id, loss, acc))
+                scalar0.add_record(total_iters, loss)
+                scalar1.add_record(total_iters, acc)
 
-            train_elapsed = time.time() - start_time
-            print("Pass=%d, Loss=%f, Accuray=%f\n" %
-                  (pass_id, np.mean(train_losses), np.mean(train_accs)))
-
+            total_train_time += pass_duration
             # evaluation
             if args.with_test:
-                test()
-
-        if not args.with_test:
-            duration = time.time() - start_time
-            examples_per_sec = num_samples / duration
-            sec_per_batch = duration / (iters - args.skip_batch_num)
+                pass_test_acc = test()
+                print("Pass: %d, Loss: %f, Train Accuray: %f, Test Accuray: %f, Duration: %f\n" %
+                      (pass_id, np.mean(train_losses), np.mean(train_accs), pass_test_acc, pass_duration))
+            else:
+                print("Pass: %d, Loss: %f, Train Accuray: %f, Duration: %f\n" %
+                      (pass_id, np.mean(train_losses), np.mean(train_accs), pass_duration))
+        if total_train_time > 0.0 and iters != args.skip_batch_num:
+            examples_per_sec = num_samples / total_train_time
+            sec_per_batch = total_train_time / (iters * args.pass_num - args.skip_batch_num)
 
             print('Total examples: %d, total time: %.5f' %
-                  (num_samples, duration))
+                (num_samples, total_train_time))
             print('%.5f examples/sec, %.5f sec/batch' %
-                  (examples_per_sec, sec_per_batch))
+                (examples_per_sec, sec_per_batch))
 
 
 if __name__ == '__main__':
