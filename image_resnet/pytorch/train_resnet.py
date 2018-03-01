@@ -76,6 +76,12 @@ parser.add_argument(
     metavar='PATH',
     help='path to latest checkpoint (default: none)')
 parser.add_argument(
+    '--datadir',
+    default=None,
+    type=str,
+    metavar='PATH',
+    help='path to train data(default: ./data)')
+parser.add_argument(
     '-e',
     '--evaluate',
     dest='evaluate',
@@ -300,8 +306,12 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
     cudnn.benchmark = True
-    traindir = "../data_pytorch_imagenet1000/train"
-    valdir = "../data_pytorch_imagenet1000/val"
+
+    traindir = args.datadir
+    valdir = traindir
+    if traindir is None:
+        print("please set --datadir")
+        exit(1)
 
     train_dataset = datasets.ImageFolder(traindir,
                                          transforms.Compose([
