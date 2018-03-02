@@ -14,25 +14,6 @@ DATA_DIM = 224
 THREAD = 8
 BUF_SIZE = 10240
 
-TRAIN_LIST = 'data/train_image1000_shuf.txt'
-TEST_LIST = 'data/val_image1000.txt'
-train_data = {"image": [], "label": []}
-test_data = {"image": [], "label": []}
-train_list = open(TRAIN_LIST, "r").readlines()
-for i, item in enumerate(train_list):
-    path, label = item.strip().split()
-    label = int(label)
-    train_data["image"].append(path)
-    train_data["label"].append(label)
-test_list = open(TEST_LIST, "r").readlines()
-for i, item in enumerate(test_list):
-    path, label = item.strip().split()
-    label = int(label)
-    test_data["image"].append(path)
-    test_data["label"].append(label)
-print "train_data size:", len(train_data)
-print "test_data size:", len(test_data)
-
 img_mean = np.array([0.485, 0.456, 0.406]).reshape((3, 1, 1))
 img_std = np.array([0.229, 0.224, 0.225]).reshape((3, 1, 1))
 
@@ -174,6 +155,12 @@ def process_image_imagepath2(sample, mode):
         return img
 
 
+def fake_reader():
+    img, lab = process_image_imagepath2(None, "train")
+    while True:
+        yield img, lab
+
+
 def process_image_imagepath(sample, mode, color_jitter, rotate):
     imgpath = sample[0]
     img = Image.open(imgpath)
@@ -243,9 +230,8 @@ def _reader_creator(data, mode, shuffle=False, color_jitter=False,
 
 
 def train():
-    return _reader_creator_imagepath(
-        train_data, 'train', shuffle=True, color_jitter=False, rotate=False)
+    return fake_reader
 
 
 def test():
-    return _reader_creator_imagepath(test_data, 'test', shuffle=False)
+    return fake_reader

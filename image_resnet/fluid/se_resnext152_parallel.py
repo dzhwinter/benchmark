@@ -3,7 +3,7 @@ import numpy as np
 import sys
 import time
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
+import paddle.fluid as fluid
 import reader
 
 #fluid.default_startup_program().random_seed = 111
@@ -270,4 +270,4 @@ def train(learning_rate,
 
 
 if __name__ == '__main__':
-    train(learning_rate=0.1, batch_size=25, num_passes=90, init_model=None)
+    train(learning_rate=0.1, batch_size=12, num_passes=90, init_model=None)
