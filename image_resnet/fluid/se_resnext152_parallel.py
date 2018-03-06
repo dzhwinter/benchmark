@@ -172,8 +172,6 @@ def train(learning_rate,
 
     inference_program = fluid.default_main_program().clone()
 
-    global_step = fluid.layers.create_global_var(
-        shape=[1], value=0, dtype='float32', force_cpu=True, persistable=True)
     epoch = [30, 60, 90]
     total_images = 1281167
     pass_each_epoch = int(total_images / batch_size + 1)
@@ -183,10 +181,9 @@ def train(learning_rate,
     print("Training with learning rates:", bd, lr)
 
     optimizer = fluid.optimizer.Momentum(
-        learning_rate=fluid.learning_rate_decay.piecewise_decay(
-            global_step=global_step, boundaries=bd, values=lr),
+        learning_rate=fluid.layers.piecewise_decay(
+            boundaries=bd, values=lr),
         momentum=0.9,
-        global_step=global_step,
         regularization=fluid.regularizer.L2Decay(1e-4))
     opts = optimizer.minimize(avg_cost)
     fluid.memory_optimize(fluid.default_main_program())
