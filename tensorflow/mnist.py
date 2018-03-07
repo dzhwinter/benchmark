@@ -117,6 +117,8 @@ def run_benchmark(args):
 
     config = tf.ConfigProto(
         intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+    config.gpu_options.allow_growth = True
+
     with tf.Session(config=config) as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()

@@ -406,7 +406,11 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
         print("Pass = %d, Train performance = %f imgs/s, Test accuracy = %f\n" %
               (pass_id, num_samples / train_elapsed, np.mean(test_accs)))
 
-    with tf.Session() as sess:
+    config = tf.ConfigProto(
+        intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+    config.gpu_options.allow_growth = True
+
+    with tf.Session(config=config) as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
         sess.run(init_g)

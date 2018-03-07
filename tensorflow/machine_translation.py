@@ -511,7 +511,7 @@ def train():
             adapted_batch_data = adapt_batch_data(data)
             outputs = sess.run([loss],
                                feed_dict={
-                                   item[1]: adapt_batch_data[item[0]]
+                                   item[1]: adapted_batch_data[item[0]]
                                    for item in feeding_dict.items()
                                })
             total_loss += outputs[0]
@@ -520,6 +520,8 @@ def train():
 
     config = tf.ConfigProto(
         intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+    config.gpu_options.allow_growth = True
+
     with tf.Session(config=config) as sess:
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
