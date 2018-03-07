@@ -237,11 +237,16 @@ def train():
                             fetch_list=[],
                             use_program_cache=True)
                 train_stop = time.time()
-                if step_id > args.skip_first_steps:
-                    train_time += train_stop - train_start
-
+                step_time = train_stop - train_start
+                if step_id >= args.skip_first_steps:
+                    train_time += step_time
+                print("step_id=" + str(step_id) + " step_time=" + str(
+                    step_time))
             print("\n\n\n")
-            print("train_time=" + str(train_time))
+            calc_step_num = step_num - args.skip_first_steps
+            print("calc_step_num=" + str(calc_step_num) + " total_train_time=" +
+                  str(train_time) + " ave_step_time=" + str(
+                      float(train_time) / calc_step_num))
 
 
 if __name__ == '__main__':
