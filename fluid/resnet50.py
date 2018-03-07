@@ -10,9 +10,9 @@ import time
 import cProfile, pstats, StringIO
 
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
-import paddle.v2.fluid.core as core
-import paddle.v2.fluid.profiler as profiler
+import paddle.fluid as fluid
+import paddle.fluid.core as core
+import paddle.fluid.profiler as profiler
 from visualdl import LogWriter
 
 

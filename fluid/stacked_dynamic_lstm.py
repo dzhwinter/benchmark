@@ -11,9 +11,9 @@ import time
 import numpy
 import paddle.v2 as paddle
 import paddle.v2.dataset.imdb as imdb
-import paddle.v2.fluid as fluid
+import paddle.fluid as fluid
 from paddle.v2 import batch
-import paddle.v2.fluid.profiler as profiler
+import paddle.fluid.profiler as profiler
 
 def parse_args():
     parser = argparse.ArgumentParser("Understand Sentiment by Dynamic RNN.")

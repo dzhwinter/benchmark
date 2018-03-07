@@ -5,8 +5,8 @@ import sys
 import time
 import numpy as np
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
-import paddle.v2.fluid.core as core
+import paddle.fluid as fluid
+import paddle.fluid.core as core
 import argparse
 import functools
 

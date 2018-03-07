@@ -7,8 +7,8 @@ import argparse
 import time
 
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
-import paddle.v2.fluid.profiler as profiler
+import paddle.fluid as fluid
+import paddle.fluid.profiler as profiler
 
 SEED = 1
 DTYPE = "float32"
