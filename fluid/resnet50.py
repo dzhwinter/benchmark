@@ -188,14 +188,17 @@ def run_benchmark(model, args):
     predict = model(input, class_dim)
     cost = fluid.layers.cross_entropy(input=predict, label=label)
     avg_cost = fluid.layers.mean(x=cost)
-    optimizer = fluid.optimizer.Momentum(learning_rate=0.01, momentum=0.9)
-    opts = optimizer.minimize(avg_cost)
-    accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
-    # inference program
+
+    batch_size_tensor = fluid.layers.create_tensor(dtype='int64')
+    batch_acc = fluid.layers.accuracy(input=predict, label=label, total=batch_size_tensor)
+
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
-        test_target = accuracy.metrics + accuracy.states
-        inference_program = fluid.io.get_inference_program(test_target)
+        inference_program = fluid.io.get_inference_program(
+                            target_vars=[batch_acc, batch_size_tensor])
+
+    optimizer = fluid.optimizer.Momentum(learning_rate=0.01, momentum=0.9)
+    opts = optimizer.minimize(avg_cost)
 
     fluid.memory_optimize(fluid.default_main_program())
 
@@ -206,28 +209,30 @@ def run_benchmark(model, args):
             buf_size=5120),
         batch_size=args.batch_size)
     test_reader = paddle.batch(
-        paddle.dataset.cifar.test10()
-        if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
-        batch_size=args.batch_size)
+            paddle.dataset.cifar.test10()
+            if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
+            batch_size=args.batch_size)
 
     def test(exe):
-        accuracy.reset(exe)
+        test_accuracy = fluid.average.WeightedAverage()
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(dshape),
-                                    data)).astype("float32")
+                                data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
-            exe.run(inference_program,
-                    feed={"data": img_data,
-                          "label": y_data})
+            acc, weight = exe.run(inference_program,
+                          feed={"data": img_data,
+                                "label": y_data},
+                                fetch_list=[batch_acc, batch_size_tensor])
+            test_accuracy.add(value=acc, weight=weight)
 
-        return accuracy.eval(exe)
+        return test_accuracy.eval()
 
     place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
-
+    accuracy = fluid.average.WeightedAverage()
     if args.use_fake_data:
         data = train_reader().next()
         image = np.array(map(lambda x: x[0].reshape(dshape), data)).astype(
@@ -246,7 +251,7 @@ def run_benchmark(model, args):
 
     for pass_id in range(args.pass_num):
         every_pass_loss = []
-        accuracy.reset(exe)
+        accuracy.reset()
         iter = 0
         pass_duration = 0.0
         for batch_id, data in enumerate(train_reader()):
@@ -258,10 +263,11 @@ def run_benchmark(model, args):
                                      data)).astype('float32')
                 label = np.array(map(lambda x: x[1], data)).astype('int64')
                 label = label.reshape([-1, 1])
-            loss, acc = exe.run(fluid.default_main_program(),
+            loss, acc, weight = exe.run(fluid.default_main_program(),
                                 feed={'data': image,
                                       'label': label},
-                                fetch_list=[avg_cost] + accuracy.metrics)
+                                fetch_list=[avg_cost, batch_acc, batch_size_tensor])
+            accuracy.add(value=acc, weight=weight)
             if iter >= args.skip_batch_num or pass_id != 0:
                 batch_duration = time.time() - batch_start
                 pass_duration += batch_duration
@@ -275,7 +281,7 @@ def run_benchmark(model, args):
             total_iters += 1
 
         total_train_time += pass_duration
-        pass_train_acc = accuracy.eval(exe)
+        pass_train_acc = accuracy.eval()
         pass_test_acc = test(exe)
         print("Pass: %d, Loss: %f, Train Accuray: %f, Test Accuray: %f, Handle Images Duration: %f\n" %
               (pass_id, np.mean(every_pass_loss), pass_train_acc, pass_test_acc, pass_duration))
