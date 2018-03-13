@@ -5,8 +5,8 @@ import sys
 import time
 import numpy as np
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
-import paddle.v2.fluid.core as core
+import paddle.fluid as fluid
+import paddle.fluid.core as core
 import argparse
 import functools
 
@@ -92,13 +92,14 @@ def main():
     avg_cost = fluid.layers.mean(x=cost)
 
     # Evaluator
-    accuracy = fluid.evaluator.Accuracy(input=predict, label=label)
+    batch_size_tensor = fluid.layers.create_tensor(dtype='int64')
+    batch_acc = fluid.layers.accuracy(input=predict, label=label, total=batch_size_tensor)
 
     # inference program
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
-        test_target = accuracy.metrics + accuracy.states
-        inference_program = fluid.io.get_inference_program(test_target)
+        inference_program = fluid.io.get_inference_program(
+                            target_vars=[batch_acc, batch_size_tensor])
 
     # Optimization
     optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
@@ -127,35 +128,38 @@ def main():
 
     # test
     def test(exe):
-        accuracy.reset(exe)
+        test_accuracy = fluid.average.WeightedAverage()
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
-            exe.run(inference_program,
-                    feed={"pixel": img_data,
-                          "label": y_data})
-
-        return accuracy.eval(exe)
+            acc, weight = exe.run(inference_program,
+                            feed={"pixel": img_data,
+                                  "label": y_data},
+                            fetch_list=[batch_acc, batch_size_tensor])
+            test_accuracy.add(value=acc, weight=weight)
+        return test_accuracy.eval()
 
     iters = 0
+    accuracy = fluid.average.WeightedAverage()
     for pass_id in range(args.num_passes):
         # train
         start_time = time.time()
         num_samples = 0
-        accuracy.reset(exe)
+        accuracy.reset()
         for batch_id, data in enumerate(train_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
-            loss, acc = exe.run(fluid.default_main_program(),
+            loss, acc, weight = exe.run(fluid.default_main_program(),
                                 feed={"pixel": img_data,
                                       "label": y_data},
-                                fetch_list=[avg_cost] + accuracy.metrics)
+                                fetch_list=[avg_cost, batch_acc, batch_size_tensor])
+            accuracy.add(value=acc, weight=weight)
             iters += 1
             num_samples += len(data)
             print(
@@ -164,13 +168,12 @@ def main():
             )  # The accuracy is the accumulation of batches, but not the current batch.
 
         pass_elapsed = time.time() - start_time
-        pass_train_acc = accuracy.eval(exe)
+        pass_train_acc = accuracy.eval()
         pass_test_acc = test(exe)
         print(
             "Pass = %d, Training performance = %f imgs/s, Train accuracy = %f, Test accuracy = %f\n"
             % (pass_id, num_samples / pass_elapsed, pass_train_acc,
                pass_test_acc))
-
 
 def print_arguments():
     print('-----------  Configuration Arguments -----------')

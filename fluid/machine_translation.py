@@ -9,10 +9,10 @@ import time
 import distutils.util
 
 import paddle.v2 as paddle
-import paddle.v2.fluid as fluid
-import paddle.v2.fluid.core as core
-import paddle.v2.fluid.framework as framework
-from paddle.v2.fluid.executor import Executor
+import paddle.fluid as fluid
+import paddle.fluid.core as core
+import paddle.fluid.framework as framework
+from paddle.fluid.executor import Executor
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
