@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument(
         '--use_nccl',
         type=distutils.util.strtobool,
-        default=True,
+        default=False,
         help='use_nccl')
     parser.add_argument(
         '--use_python_reader',
@@ -204,12 +204,26 @@ def train():
         avg_cost = fluid.layers.mean(x=cost)
         accuracy = fluid.layers.accuracy(input=out, label=label)
 
-    optimizer = fluid.optimizer.SGD(learning_rate=0.002)
+    #optimizer = fluid.optimizer.SGD(learning_rate=0.002)
+    optimizer = fluid.optimizer.Momentum(
+        learning_rate=fluid.layers.piecewise_decay(
+            boundaries=[100], values=[0.1, 0.2]),
+        momentum=0.9,
+        regularization=fluid.regularizer.L2Decay(1e-4))
     opts = optimizer.minimize(avg_cost)
+    with open("main.proto", "w") as f:
+        f.write(str(fluid.default_main_program()))
 
-    fluid.memory_optimize(fluid.default_main_program())
+    # fluid.memory_optimize(fluid.default_main_program())
 
-    place = fluid.CUDAPlace(0)
+    exit(0)
+    fluid.fuse_optimize_op(fluid.default_main_program())
+
+    with open("main.proto.after_fuse", "w") as f:
+        f.write(str(fluid.default_main_program()))
+
+    # place = fluid.CUDAPlace(0)
+    place = fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
