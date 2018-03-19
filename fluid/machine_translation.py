@@ -158,7 +158,7 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
                                                 act='tanh',
                                                 bias_attr=False)
             attention_weights = fluid.layers.sequence_softmax(
-                x=attention_weights)
+                input=attention_weights)
             weigths_reshape = fluid.layers.reshape(
                 x=attention_weights, shape=[-1])
             scaled = fluid.layers.elementwise_mul(
