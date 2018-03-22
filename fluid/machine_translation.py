@@ -152,7 +152,7 @@ def seq_to_seq_net(embedding_dim, encoder_size, decoder_size, source_dict_dim,
             decoder_state_expand = fluid.layers.sequence_expand(
                 x=decoder_state_proj, y=encoder_proj)
             concated = fluid.layers.concat(
-                input=[decoder_state_expand, encoder_proj], axis=1)
+                input=[encoder_proj, decoder_state_expand], axis=1)
             attention_weights = fluid.layers.fc(input=concated,
                                                 size=1,
                                                 act='tanh',
