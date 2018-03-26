@@ -9,6 +9,13 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     '--batch_size', type=int, default=128, help="Batch size for training.")
 parser.add_argument(
+    '--skip_batch_num',
+    type=int,
+    default=5,
+    help='The first num of minibatch num to skip, for better performance test')
+parser.add_argument(
+    '--iterations', type=int, default=80, help='The number of minibatches.')
+parser.add_argument(
     '--learning_rate',
     type=float,
     default=1e-3,
@@ -259,12 +266,17 @@ def run_benchmark():
         init_l = tf.local_variables_initializer()
         sess.run(init_g)
         sess.run(init_l)
-        iters, num_samples, start_time = 0, 0, 0.0
+        iters, num_samples, start_time = 0, 0, time.time()
         for pass_id in range(args.num_passes):
             # train
             num_samples = 0
             start_time = time.time()
             for batch_id, data in enumerate(train_reader()):
+                if iters == args.skip_batch_num:
+                    start_time = time.time()
+                    num_samples = 0
+                if iters == args.iterations:
+                    break
                 train_images = np.array(
                     map(lambda x: np.transpose(x[0].reshape(raw_shape),
                     axes=[1, 2, 0]) if args.data_format == 'NHWC' else x[0], data)).astype("float32")
@@ -277,9 +289,9 @@ def run_benchmark():
                                             is_training: True
                                         })
                 iters += 1
+                num_samples += len(data)
                 print("Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
                       (pass_id, iters, loss, acc))
-                num_samples += len(data)
             train_elapsed = time.time() - start_time
             # test
             pass_test_acc = test()

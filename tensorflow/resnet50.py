@@ -450,8 +450,8 @@ def run_benchmark(args, data_format='channels_last', device='/cpu:0'):
                 train_accs.append(acc)
                 train_losses.append(loss)
                 num_samples += len(data)
-                print("Pass=%d, Batch=%d, Loss=%f, Accuray=%f\n" %
-                      (pass_id, batch_id, loss, acc))
+                print("Pass=%d, Iter=%d, Loss=%f, Accuray=%f\n" %
+                      (pass_id, iters, loss, acc))
 
             train_elapsed = time.time() - start_time
             print("Pass=%d, Loss=%f, Accuray=%f\n" %

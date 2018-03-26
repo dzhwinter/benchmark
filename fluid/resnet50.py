@@ -13,7 +13,6 @@ import paddle.v2 as paddle
 import paddle.fluid as fluid
 import paddle.fluid.core as core
 import paddle.fluid.profiler as profiler
-from visualdl import LogWriter
 
 
 def parse_args():
@@ -26,8 +25,6 @@ def parse_args():
         help='The model architecture.')
     parser.add_argument(
         '--batch_size', type=int, default=32, help='The minibatch size.')
-    parser.add_argument(
-        '--log_dir', '-f', type=str, default='./', help='The path of the log file')
     parser.add_argument(
         '--use_fake_data',
         action='store_true',
@@ -68,6 +65,10 @@ def parse_args():
         '--use_nvprof',
         action='store_true',
         help='If set, use nvprof for CUDA.')
+    parser.add_argument(
+        '--with_test',
+        action='store_true',
+        help='If set, test the testset during training.')
     args = parser.parse_args()
     return args
 
@@ -149,6 +150,7 @@ def resnet_imagenet(input, class_dim, depth=50, data_format='NCHW'):
     out = fluid.layers.fc(input=pool2, size=class_dim, act='softmax')
     return out
 
+
 def resnet_cifar10(input, class_dim, depth=32, data_format='NCHW'):
     assert (depth - 2) % 6 == 0
 
@@ -190,12 +192,13 @@ def run_benchmark(model, args):
     avg_cost = fluid.layers.mean(x=cost)
 
     batch_size_tensor = fluid.layers.create_tensor(dtype='int64')
-    batch_acc = fluid.layers.accuracy(input=predict, label=label, total=batch_size_tensor)
+    batch_acc = fluid.layers.accuracy(
+        input=predict, label=label, total=batch_size_tensor)
 
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
         inference_program = fluid.io.get_inference_program(
-                            target_vars=[batch_acc, batch_size_tensor])
+            target_vars=[batch_acc, batch_size_tensor])
 
     optimizer = fluid.optimizer.Momentum(learning_rate=0.01, momentum=0.9)
     opts = optimizer.minimize(avg_cost)
@@ -209,22 +212,22 @@ def run_benchmark(model, args):
             buf_size=5120),
         batch_size=args.batch_size)
     test_reader = paddle.batch(
-            paddle.dataset.cifar.test10()
-            if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
-            batch_size=args.batch_size)
+        paddle.dataset.cifar.test10()
+        if args.data_set == 'cifar10' else paddle.dataset.flowers.test(),
+        batch_size=args.batch_size)
 
     def test(exe):
         test_accuracy = fluid.average.WeightedAverage()
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(dshape),
-                                data)).astype("float32")
+                                    data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
             acc, weight = exe.run(inference_program,
-                          feed={"data": img_data,
-                                "label": y_data},
-                                fetch_list=[batch_acc, batch_size_tensor])
+                                  feed={"data": img_data,
+                                        "label": y_data},
+                                  fetch_list=[batch_acc, batch_size_tensor])
             test_accuracy.add(value=acc, weight=weight)
 
         return test_accuracy.eval()
@@ -240,59 +243,46 @@ def run_benchmark(model, args):
         label = np.array(map(lambda x: x[1], data)).astype('int64')
         label = label.reshape([-1, 1])
 
-    im_num = 0
-    total_train_time = 0.0
-    total_iters = 0
-    logger = LogWriter(args.log_dir, sync_cycle=10)
-    with logger.mode('loss') as logger:
-        scalar0 = logger.scalar("paddle_resnet_%s%d/scalar" % (args.device, args.batch_size))
-    with logger.mode('accuracy') as logger:
-        scalar1 = logger.scalar("paddle_resnet_%s%d/scalar" % (args.device, args.batch_size))
-
+    iters, num_samples, start_time = 0, 0, time.time()
     for pass_id in range(args.pass_num):
-        every_pass_loss = []
         accuracy.reset()
-        iter = 0
-        pass_duration = 0.0
+        train_accs = []
+        train_losses = []
         for batch_id, data in enumerate(train_reader()):
-            batch_start = time.time()
-            if iter == args.iterations:
+            if iters == args.skip_batch_num:
+                start_time = time.time()
+                num_samples = 0
+            if iters == args.iterations:
                 break
             if not args.use_fake_data:
                 image = np.array(map(lambda x: x[0].reshape(dshape),
                                      data)).astype('float32')
                 label = np.array(map(lambda x: x[1], data)).astype('int64')
                 label = label.reshape([-1, 1])
-            loss, acc, weight = exe.run(fluid.default_main_program(),
-                                feed={'data': image,
-                                      'label': label},
-                                fetch_list=[avg_cost, batch_acc, batch_size_tensor])
+            loss, acc, weight = exe.run(
+                fluid.default_main_program(),
+                feed={'data': image,
+                      'label': label},
+                fetch_list=[avg_cost, batch_acc, batch_size_tensor])
+            iters += 1
+            num_samples += label[0]
             accuracy.add(value=acc, weight=weight)
-            if iter >= args.skip_batch_num or pass_id != 0:
-                batch_duration = time.time() - batch_start
-                pass_duration += batch_duration
-                im_num += label.shape[0]
-            every_pass_loss.append(loss)
-            print("Pass: %d, Iter: %d, loss: %s, acc: %s" %
-                  (pass_id, iter, str(loss), str(acc)))
-            scalar0.add_record(total_iters, loss)
-            scalar1.add_record(total_iters, acc)
-            iter += 1
-            total_iters += 1
-
-        total_train_time += pass_duration
+            train_losses.append(loss)
+            train_accs.append(acc)
+            print("Pass: %d, Iter: %d, Loss: %f, Accuracy: %f" %
+                  (pass_id, iters, loss, acc))
         pass_train_acc = accuracy.eval()
-        pass_test_acc = test(exe)
-        print("Pass: %d, Loss: %f, Train Accuray: %f, Test Accuray: %f, Handle Images Duration: %f\n" %
-              (pass_id, np.mean(every_pass_loss), pass_train_acc, pass_test_acc, pass_duration))
+        # evaluation
+        if args.with_test:
+            pass_test_acc = test(exe)
+        train_elapsed = time.time() - start_time
+        print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
+              (pass_id, np.mean(train_losses), np.mean(train_accs)))
 
-    if total_train_time > 0.0 and iter != args.skip_batch_num:
-        examples_per_sec = im_num / total_train_time
-        sec_per_batch = total_train_time / (iter * args.pass_num - args.skip_batch_num)
+        examples_per_sec = num_samples / train_elapsed
 
-        print('\nTotal examples: %d, total time: %.5f' % (im_num, total_train_time))
-        print('%.5f examples/sec, %.5f sec/batch \n' %
-              (examples_per_sec, sec_per_batch))
+        print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
+              (num_samples, train_elapsed, examples_per_sec))
 
     if args.use_cprof:
         pr.disable()
