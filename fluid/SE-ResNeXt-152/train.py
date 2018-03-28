@@ -24,7 +24,7 @@ import paddle.fluid.profiler as profiler
 
 
 def parse_args():
-    parser = argparse.ArgumentParser('resnet152 parallel profile.')
+    parser = argparse.ArgumentParser('SE-ResNeXt-152 parallel profile.')
     parser.add_argument('--per_gpu_batch_size', type=int, default=12, help='')
     parser.add_argument(
         '--skip_first_steps',
@@ -240,16 +240,11 @@ def train():
 
             for step_id in range(step_num):
                 train_start = time.time()
-                if args.use_python_reader:
-                    exe.run(fluid.default_main_program(),
-                            feed=feeder.feed(train_reader_iter.next()),
-                            fetch_list=[],
-                            use_program_cache=True)
-                else:
-                    exe.run(fluid.default_main_program(),
-                            feed=feed_dict,
-                            fetch_list=[],
-                            use_program_cache=True)
+                exe.run(fluid.default_main_program(),
+                        feed=feeder.feed(train_reader_iter.next())
+                        if args.use_python_reader else feed_dict,
+                        fetch_list=[],
+                        use_program_cache=True)
                 train_stop = time.time()
                 step_time = train_stop - train_start
                 if step_id >= args.skip_first_steps:
