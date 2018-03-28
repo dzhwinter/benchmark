@@ -27,6 +27,11 @@ def parse_args():
     parser = argparse.ArgumentParser('SE-ResNeXt-152 parallel profile.')
     parser.add_argument('--per_gpu_batch_size', type=int, default=12, help='')
     parser.add_argument(
+        '--use_mem_opt',
+        type=distutils.util.strtobool,
+        default=True,
+        help='use memory optimize')
+    parser.add_argument(
         '--skip_first_steps',
         type=int,
         default=2,
@@ -212,7 +217,8 @@ def train():
         regularization=fluid.regularizer.L2Decay(1e-4))
     opts = optimizer.minimize(avg_cost)
 
-    fluid.memory_optimize(fluid.default_main_program())
+    if args.use_mem_opt:
+        fluid.memory_optimize(fluid.default_main_program())
 
     place = fluid.CUDAPlace(0)
     # place = fluid.CPUPlace()
@@ -227,27 +233,26 @@ def train():
     feed_dict = feeder.feed(data)
 
     for pass_id in range(1):
-        with profiler.profiler('All', 'total', '/tmp/profile') as prof:
-            train_time = 0.0
+        #with profiler.profiler('All', 'total', '/tmp/profile') as prof:
+        train_time = 0.0
 
-            for step_id in range(step_num):
-                train_start = time.time()
-                exe.run(fluid.default_main_program(),
-                        feed=feeder.feed(train_reader_iter.next())
-                        if args.use_python_reader else feed_dict,
-                        fetch_list=[],
-                        use_program_cache=True)
-                train_stop = time.time()
-                step_time = train_stop - train_start
-                if step_id >= args.skip_first_steps:
-                    train_time += step_time
-                print("step_id=" + str(step_id) + " step_time=" + str(
-                    step_time))
-            print("\n\n\n")
-            calc_step_num = step_num - args.skip_first_steps
-            print("calc_step_num=" + str(calc_step_num) + " total_train_time=" +
-                  str(train_time) + " ave_step_time=" + str(
-                      float(train_time) / calc_step_num))
+        for step_id in range(step_num):
+            train_start = time.time()
+            exe.run(fluid.default_main_program(),
+                    feed=feeder.feed(train_reader_iter.next())
+                    if args.use_python_reader else feed_dict,
+                    fetch_list=[],
+                    use_program_cache=True)
+            train_stop = time.time()
+            step_time = train_stop - train_start
+            if step_id >= args.skip_first_steps:
+                train_time += step_time
+            print("step_id=" + str(step_id) + " step_time=" + str(step_time))
+        print("\n\n\n")
+        calc_step_num = step_num - args.skip_first_steps
+        print("calc_step_num=" + str(calc_step_num) + " total_train_time=" +
+              str(train_time) + " ave_step_time=" + str(
+                  float(train_time) / calc_step_num))
 
 
 if __name__ == '__main__':
