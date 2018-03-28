@@ -211,8 +211,6 @@ def train():
         momentum=0.9,
         regularization=fluid.regularizer.L2Decay(1e-4))
     opts = optimizer.minimize(avg_cost)
-    with open("main.proto", "w") as f:
-        f.write(str(fluid.default_main_program()))
 
     # fluid.memory_optimize(fluid.default_main_program())
 
