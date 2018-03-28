@@ -212,7 +212,7 @@ def train():
         regularization=fluid.regularizer.L2Decay(1e-4))
     opts = optimizer.minimize(avg_cost)
 
-    # fluid.memory_optimize(fluid.default_main_program())
+    fluid.memory_optimize(fluid.default_main_program())
 
     place = fluid.CUDAPlace(0)
     # place = fluid.CPUPlace()
