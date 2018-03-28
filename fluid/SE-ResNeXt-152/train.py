@@ -216,14 +216,8 @@ def train():
 
     # fluid.memory_optimize(fluid.default_main_program())
 
-    exit(0)
-    fluid.fuse_optimize_op(fluid.default_main_program())
-
-    with open("main.proto.after_fuse", "w") as f:
-        f.write(str(fluid.default_main_program()))
-
-    # place = fluid.CUDAPlace(0)
-    place = fluid.CPUPlace()
+    place = fluid.CUDAPlace(0)
+    # place = fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
