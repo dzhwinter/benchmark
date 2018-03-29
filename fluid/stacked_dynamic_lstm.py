@@ -211,5 +211,14 @@ def to_lodtensor(data, place):
     return res
 
 
+def print_arguments():
+    print('----------- lstm Configuration Arguments -----------')
+    for arg, value in sorted(vars(args).iteritems()):
+        print('%s: %s' % (arg, value))
+    print('------------------------------------------------')
+
+
 if __name__ == '__main__':
+    args = parse_args()
+    print_arguments(args)
     main()

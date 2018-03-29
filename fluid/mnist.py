@@ -53,15 +53,6 @@ def parse_args():
     return args
 
 
-def print_arguments(args):
-    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
-                                vars(args)['device'] == 'GPU')
-    print('-----------  Configuration Arguments -----------')
-    for arg, value in sorted(vars(args).iteritems()):
-        print('%s: %s' % (arg, value))
-    print('------------------------------------------------')
-
-
 def cnn_model(data):
     conv_pool_1 = fluid.nets.simple_img_conv_pool(
         input=data,
@@ -202,6 +193,15 @@ def run_benchmark(model, args):
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
         exit(0)
+
+
+def print_arguments(args):
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
+    print('----------- mnist Configuration Arguments -----------')
+    for arg, value in sorted(vars(args).iteritems()):
+        print('%s: %s' % (arg, value))
+    print('------------------------------------------------')
 
 
 if __name__ == '__main__':

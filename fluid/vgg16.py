@@ -200,7 +200,7 @@ def main():
 
 
 def print_arguments():
-    print('-----------  Configuration Arguments -----------')
+    print('----------- vgg Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')

@@ -73,15 +73,6 @@ def parse_args():
     return args
 
 
-def print_arguments(args):
-    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
-                                vars(args)['device'] == 'GPU')
-    print('-----------  Configuration Arguments -----------')
-    for arg, value in sorted(vars(args).iteritems()):
-        print('%s: %s' % (arg, value))
-    print('------------------------------------------------')
-
-
 def conv_bn_layer(input, ch_out, filter_size, stride, padding, act='relu'):
     conv1 = fluid.layers.conv2d(
         input=input,
@@ -289,6 +280,15 @@ def run_benchmark(model, args):
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print(s.getvalue())
+
+
+def print_arguments(args):
+    vars(args)['use_nvprof'] = (vars(args)['use_nvprof'] and
+                                vars(args)['device'] == 'GPU')
+    print('----------- resnet Configuration Arguments -----------')
+    for arg, value in sorted(vars(args).iteritems()):
+        print('%s: %s' % (arg, value))
+    print('------------------------------------------------')
 
 
 if __name__ == '__main__':

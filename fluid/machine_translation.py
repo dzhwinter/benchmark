@@ -339,11 +339,6 @@ def train():
         # evaluation
         if args.with_test:
             test_loss = do_validation()
-        # pass_end_time = time.time()
-        # time_consumed = pass_end_time - pass_start_time
-        # words_per_sec = num_samples / time_consumed
-        # print("pass_id=%d, test_loss: %f, words/s: %f, sec/pass: %f" %
-        #       (pass_id, test_loss, words_per_sec, time_consumed))
         train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
@@ -355,8 +350,16 @@ def infer():
     pass
 
 
+def print_arguments():
+    print('----------- seq2seq Configuration Arguments -----------')
+    for arg, value in sorted(vars(args).iteritems()):
+        print('%s: %s' % (arg, value))
+    print('------------------------------------------------')
+
+
 if __name__ == '__main__':
     args = parser.parse_args()
+    print_arguments(args)
     if args.infer_only:
         infer()
     else:
