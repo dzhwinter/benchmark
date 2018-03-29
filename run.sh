@@ -41,7 +41,7 @@ FLAGS_benchmark=true stdbuf -oL python fluid/mnist.py \
                --batch_size=128 \
                --skip_batch_num=5 \
                --iterations=500 \
-               2>&1 | tee -a mnist_gpu_128.log 
+               2>&1 | tee -a mnist_gpu_128.log
 
 # vgg16
 # cifar10 gpu cifar10 128
@@ -76,6 +76,7 @@ FLAGS_benchmark=true stdbuf -oL python fluid/stacked_dynamic_lstm.py \
                2>&1 | tee -a lstm_gpu_128.log
 
 # seq2seq
+# seq2seq gpu wmb 128
 FLAGS_benchmark=true stdbuf -oL python fluid/machine_translation.py \
                --device=GPU \
                --batch_size=128 \
