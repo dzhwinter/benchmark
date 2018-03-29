@@ -22,6 +22,12 @@ def parse_args():
     parser.add_argument(
         '--batch_size', type=int, default=128, help='The minibatch size.')
     parser.add_argument(
+        '--skip_batch_num',
+        type=int,
+        default=5,
+        help='The first num of minibatch num to skip, for better performance test'
+    )
+    parser.add_argument(
         '--iterations', type=int, default=35, help='The number of minibatches.')
     parser.add_argument(
         '--pass_num', type=int, default=5, help='The number of passes.')
@@ -145,16 +151,22 @@ def run_benchmark(model, args):
         paddle.dataset.mnist.train(), batch_size=args.batch_size)
 
     accuracy = fluid.average.WeightedAverage()
+    iters, num_samples, start_time = 0, 0, time.time()
     for pass_id in range(args.pass_num):
         accuracy.reset()
-        pass_start = time.time()
+        train_accs = []
+        train_losses = []
         for batch_id, data in enumerate(train_reader()):
+            if iters == args.skip_batch_num:
+                start_time = time.time()
+                num_samples = 0
+            if iters == args.iterations:
+                break
             img_data = np.array(
                 map(lambda x: x[0].reshape([1, 28, 28]), data)).astype(DTYPE)
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([len(y_data), 1])
 
-            start = time.time()
             outs = exe.run(
                 fluid.default_main_program(),
                 feed={"pixel": img_data,
@@ -162,9 +174,12 @@ def run_benchmark(model, args):
                 fetch_list=[avg_cost, batch_acc, batch_size_tensor]
             )  # The accuracy is the accumulation of batches, but not the current batch.
             accuracy.add(value=outs[1], weight=outs[2])
-            end = time.time()
+            iters += 1
+            num_samples += label[0]
             loss = np.array(outs[0])
             acc = np.array(outs[1])
+            train_losses.append(loss)
+            train_accs.append(acc)
             print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
                   (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
 
