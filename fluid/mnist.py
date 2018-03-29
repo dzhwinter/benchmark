@@ -45,6 +45,10 @@ def parse_args():
         '--use_nvprof',
         action='store_true',
         help='If set, use nvprof for CUDA.')
+    parser.add_argument(
+        '--with_test',
+        action='store_true',
+        help='If set, test the testset during training.')
     args = parser.parse_args()
     return args
 
@@ -101,7 +105,8 @@ def eval_test(exe, batch_acc, batch_size_tensor, inference_program):
         y_data = y_data.reshape([len(y_data), 1])
 
         acc, weight = exe.run(inference_program,
-                              feed={"pixel": img_data, "label": y_data},
+                              feed={"pixel": img_data,
+                                    "label": y_data},
                               fetch_list=[batch_acc, batch_size_tensor])
         test_pass_acc.add(value=acc, weight=weight)
         pass_acc = test_pass_acc.eval()
@@ -124,13 +129,14 @@ def run_benchmark(model, args):
 
     # Evaluator
     batch_size_tensor = fluid.layers.create_tensor(dtype='int64')
-    batch_acc = fluid.layers.accuracy(input=predict, label=label, total=batch_size_tensor)
+    batch_acc = fluid.layers.accuracy(
+        input=predict, label=label, total=batch_size_tensor)
 
     # inference program
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
         inference_program = fluid.io.get_inference_program(
-                          target_vars=[batch_acc, batch_size_tensor])
+            target_vars=[batch_acc, batch_size_tensor])
 
     # Optimization
     opt = fluid.optimizer.AdamOptimizer(
@@ -175,22 +181,27 @@ def run_benchmark(model, args):
             )  # The accuracy is the accumulation of batches, but not the current batch.
             accuracy.add(value=outs[1], weight=outs[2])
             iters += 1
-            num_samples += label[0]
+            num_samples += len(y_data)
             loss = np.array(outs[0])
             acc = np.array(outs[1])
             train_losses.append(loss)
             train_accs.append(acc)
-            print("pass=%d, batch=%d, loss=%f, error=%f, elapse=%f" %
-                  (pass_id, batch_id, loss, 1 - acc, (end - start) / 1000))
+            print("Pass: %d, Iter: %d, Loss: %f, Accuracy: %f" %
+                  (pass_id, iters, loss, acc))
 
-        pass_end = time.time()
+        # evaluation
+        if args.with_test:
+            test_avg_acc = eval_test(exe, batch_acc, batch_size_tensor,
+                                     inference_program)
 
-        train_avg_acc = accuracy.eval()
-        test_avg_acc = eval_test(exe, batch_acc, batch_size_tensor, inference_program)
+        print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
+              (pass_id, np.mean(train_losses), np.mean(train_accs)))
+        train_elapsed = time.time() - start_time
+        examples_per_sec = num_samples / train_elapsed
 
-        print("pass=%d, train_avg_acc=%f, test_avg_acc=%f, elapse=%f" %
-              (pass_id, train_avg_acc, test_avg_acc,
-               (pass_end - pass_start) / 1000))
+        print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
+              (num_samples, train_elapsed, examples_per_sec))
+        exit(0)
 
 
 if __name__ == '__main__':

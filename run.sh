@@ -25,25 +25,52 @@ export CUDA_VISIBLE_DEVICES=0
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=$CUDNN_PATH:$LD_LIBRARY_PATH
 
+# mnist
+# mnist gpu mnist 128
+# FLAGS_benchmark=true python fluid/mnist.py \
+#                --device=GPU \
+#                --batch_size=128 \
+#                --skip_batch_num=5 \
+#                --iterations=1000 \
+#                2>&1 > /tmp/mnist_gpu_128.log
 
 # vgg16
 # cifar10 gpu cifar10 128
-FLAGS_benchmark=true python fluid/vgg16.py \
-               --device=GPU \
-               --batch_size=128 \
-               --skip_batch_num=5 \
-               --iterations=30  \
-               2>&1 > vgg16_gpu_128.log
+# FLAGS_benchmark=true python fluid/vgg16.py \
+#                --device=GPU \
+#                --batch_size=128 \
+#                --skip_batch_num=5 \
+#                --iterations=30  
+               # 2>&1 > vgg16_gpu_128.log
 
 # resnet50
 # resnet50 gpu cifar10 128
-FLAGS_benchmark=true python fluid/resnet50.py \
-               --device=GPU \
-               --batch_size=128 \
-               --data_set=cifar10 \
-               --model=resnet_cifar10 \
-               --skip_batch_num=5 \
-               --iterations=30 \
-               2>&1 > resnet50_gpu_128.log
+# FLAGS_benchmark=true python fluid/resnet50.py \
+#                --device=GPU \
+#                --batch_size=128 \
+#                --data_set=cifar10 \
+#                --model=resnet_cifar10 \
+#                --skip_batch_num=5 \
+#                --iterations=30 
+               # 2>&1 > resnet50_gpu_128.log
 
 # lstm
+# lstm gpu imdb 128
+# FLAGS_benchmark=true python fluid/stacked_dynamic_lstm.py \
+#                --device=GPU \
+#                --batch_size=128 \
+#                --skip_batch_num=5 \
+#                --iterations=30 \
+#                --hidden_dim=512 \
+#                --emb_dim=512 \
+#                --crop_size=1500 
+
+# seq2seq
+FLAGS_benchmark=true python fluid/machine_translation.py \
+               --device=GPU \
+               --batch_size=128 \
+               --skip_batch_num=5 \
+               --iterations=30
+exit 1
+
+# 2>&1 > resnet50_gpu_128.log

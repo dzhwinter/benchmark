@@ -265,24 +265,22 @@ def run_benchmark(model, args):
                       'label': label},
                 fetch_list=[avg_cost, batch_acc, batch_size_tensor])
             iters += 1
-            num_samples += label[0]
+            num_samples += len(label)
             accuracy.add(value=acc, weight=weight)
             train_losses.append(loss)
             train_accs.append(acc)
             print("Pass: %d, Iter: %d, Loss: %f, Accuracy: %f" %
                   (pass_id, iters, loss, acc))
-        pass_train_acc = accuracy.eval()
         # evaluation
         if args.with_test:
             pass_test_acc = test(exe)
-        train_elapsed = time.time() - start_time
         print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
               (pass_id, np.mean(train_losses), np.mean(train_accs)))
-
+        train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
-
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
+        exit(0)
 
     if args.use_cprof:
         pr.disable()
