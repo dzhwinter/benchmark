@@ -1,2 +1,4 @@
 .idea
 fluid/*pkl
+*.log
+*.out

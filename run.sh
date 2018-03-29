@@ -25,7 +25,7 @@ export CUDA_VISIBLE_DEVICES=0
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=$CUDNN_PATH:$LD_LIBRARY_PATH
 
-export FLAGS_fraction_of_gpu_memory_to_use=0.0
+#export FLAGS_fraction_of_gpu_memory_to_use=0.0
 # only query the gpu used
 nohup stdbuf -oL nvidia-smi \
       --id=${CUDA_VISIBLE_DEVICES} \

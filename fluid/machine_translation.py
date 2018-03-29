@@ -350,7 +350,7 @@ def infer():
     pass
 
 
-def print_arguments():
+def print_arguments(args):
     print('----------- seq2seq Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
