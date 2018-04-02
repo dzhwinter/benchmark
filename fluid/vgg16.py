@@ -14,11 +14,18 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     '--batch_size', type=int, default=128, help="Batch size for training.")
 parser.add_argument(
+    '--skip_batch_num',
+    type=int,
+    default=5,
+    help='The first num of minibatch num to skip, for better performance test')
+parser.add_argument(
+    '--iterations', type=int, default=80, help='The number of minibatches.')
+parser.add_argument(
     '--learning_rate',
     type=float,
     default=1e-3,
     help="Learning rate for training.")
-parser.add_argument('--num_passes', type=int, default=50, help="No. of passes.")
+parser.add_argument('--pass_num', type=int, default=50, help="No. of passes.")
 parser.add_argument(
     '--device',
     type=str,
@@ -37,6 +44,10 @@ parser.add_argument(
     default='cifar10',
     choices=['cifar10', 'flowers'],
     help='Optional dataset for benchmark.')
+parser.add_argument(
+    '--with_test',
+    action='store_true',
+    help='If set, test the testset during training.')
 args = parser.parse_args()
 
 
@@ -93,13 +104,14 @@ def main():
 
     # Evaluator
     batch_size_tensor = fluid.layers.create_tensor(dtype='int64')
-    batch_acc = fluid.layers.accuracy(input=predict, label=label, total=batch_size_tensor)
+    batch_acc = fluid.layers.accuracy(
+        input=predict, label=label, total=batch_size_tensor)
 
     # inference program
     inference_program = fluid.default_main_program().clone()
     with fluid.program_guard(inference_program):
         inference_program = fluid.io.get_inference_program(
-                            target_vars=[batch_acc, batch_size_tensor])
+            target_vars=[batch_acc, batch_size_tensor])
 
     # Optimization
     optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
@@ -136,47 +148,59 @@ def main():
             y_data = y_data.reshape([-1, 1])
 
             acc, weight = exe.run(inference_program,
-                            feed={"pixel": img_data,
-                                  "label": y_data},
-                            fetch_list=[batch_acc, batch_size_tensor])
+                                  feed={"pixel": img_data,
+                                        "label": y_data},
+                                  fetch_list=[batch_acc, batch_size_tensor])
             test_accuracy.add(value=acc, weight=weight)
         return test_accuracy.eval()
 
-    iters = 0
+    iters, num_samples, start_time = 0, 0, time.time()
     accuracy = fluid.average.WeightedAverage()
-    for pass_id in range(args.num_passes):
-        # train
-        start_time = time.time()
-        num_samples = 0
+    for pass_id in range(args.pass_num):
         accuracy.reset()
+        train_accs = []
+        train_losses = []
         for batch_id, data in enumerate(train_reader()):
+            if iters == args.skip_batch_num:
+                start_time = time.time()
+                num_samples = 0
+            if iters == args.iterations:
+                break
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
             y_data = y_data.reshape([-1, 1])
 
-            loss, acc, weight = exe.run(fluid.default_main_program(),
-                                feed={"pixel": img_data,
-                                      "label": y_data},
-                                fetch_list=[avg_cost, batch_acc, batch_size_tensor])
+            loss, acc, weight = exe.run(
+                fluid.default_main_program(),
+                feed={"pixel": img_data,
+                      "label": y_data},
+                fetch_list=[avg_cost, batch_acc, batch_size_tensor])
             accuracy.add(value=acc, weight=weight)
             iters += 1
-            num_samples += len(data)
+            num_samples += len(y_data)
             print(
-                "Pass = %d, Iters = %d, Loss = %f, Accuracy = %f" %
+                "Pass = %d, Iter = %d, Loss = %f, Accuracy = %f" %
                 (pass_id, iters, loss, acc)
             )  # The accuracy is the accumulation of batches, but not the current batch.
 
-        pass_elapsed = time.time() - start_time
-        pass_train_acc = accuracy.eval()
-        pass_test_acc = test(exe)
-        print(
-            "Pass = %d, Training performance = %f imgs/s, Train accuracy = %f, Test accuracy = %f\n"
-            % (pass_id, num_samples / pass_elapsed, pass_train_acc,
-               pass_test_acc))
+        # pass_train_acc = accuracy.eval()
+        train_losses.append(loss)
+        train_accs.append(acc)
+        print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
+              (pass_id, np.mean(train_losses), np.mean(train_accs)))
+        train_elapsed = time.time() - start_time
+        examples_per_sec = num_samples / train_elapsed
+        print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
+              (num_samples, train_elapsed, examples_per_sec))
+        # evaluation
+        if args.with_test:
+            pass_test_acc = test(exe)
+        exit(0)
+
 
 def print_arguments():
-    print('-----------  Configuration Arguments -----------')
+    print('----------- vgg Configuration Arguments -----------')
     for arg, value in sorted(vars(args).iteritems()):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
