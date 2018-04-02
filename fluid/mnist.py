@@ -180,11 +180,6 @@ def run_benchmark(model, args):
             print("Pass: %d, Iter: %d, Loss: %f, Accuracy: %f" %
                   (pass_id, iters, loss, acc))
 
-        # evaluation
-        if args.with_test:
-            test_avg_acc = eval_test(exe, batch_acc, batch_size_tensor,
-                                     inference_program)
-
         print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
               (pass_id, np.mean(train_losses), np.mean(train_accs)))
         train_elapsed = time.time() - start_time
@@ -192,6 +187,10 @@ def run_benchmark(model, args):
 
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
+        # evaluation
+        if args.with_test:
+            test_avg_acc = eval_test(exe, batch_acc, batch_size_tensor,
+                                     inference_program)
         exit(0)
 
 

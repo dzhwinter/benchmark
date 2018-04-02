@@ -336,13 +336,13 @@ def train():
                 "Pass = %d, Iter = %d, Loss = %f" % (pass_id, iters, loss)
             )  # The accuracy is the accumulation of batches, but not the current batch.
 
-        # evaluation
-        if args.with_test:
-            test_loss = do_validation()
         train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
+        # evaluation
+        if args.with_test:
+            test_loss = do_validation()
         exit(0)
 
 

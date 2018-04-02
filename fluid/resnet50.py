@@ -262,24 +262,16 @@ def run_benchmark(model, args):
             train_accs.append(acc)
             print("Pass: %d, Iter: %d, Loss: %f, Accuracy: %f" %
                   (pass_id, iters, loss, acc))
-        # evaluation
-        if args.with_test:
-            pass_test_acc = test(exe)
         print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
               (pass_id, np.mean(train_losses), np.mean(train_accs)))
         train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
+        # evaluation
+        if args.with_test:
+            pass_test_acc = test(exe)
         exit(0)
-
-    if args.use_cprof:
-        pr.disable()
-        s = StringIO.StringIO()
-        sortby = 'cumulative'
-        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-        ps.print_stats()
-        print(s.getvalue())
 
 
 def print_arguments(args):

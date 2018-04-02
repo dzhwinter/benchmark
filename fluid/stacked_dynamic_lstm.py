@@ -189,8 +189,6 @@ def main():
 
         train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
-        # print("pass_id=%d, sec/pass: %f, words/s: %f" %
-        #     (pass_id, time_consumed, words_per_sec))
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
         exit(0)

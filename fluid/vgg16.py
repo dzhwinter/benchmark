@@ -187,15 +187,15 @@ def main():
         # pass_train_acc = accuracy.eval()
         train_losses.append(loss)
         train_accs.append(acc)
-        # evaluation
-        if args.with_test:
-            pass_test_acc = test(exe)
         print("Pass: %d, Loss: %f, Train Accuray: %f\n" %
               (pass_id, np.mean(train_losses), np.mean(train_accs)))
         train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
         print('\nTotal examples: %d, total time: %.5f, %.5f examples/sed\n' %
               (num_samples, train_elapsed, examples_per_sec))
+        # evaluation
+        if args.with_test:
+            pass_test_acc = test(exe)
         exit(0)
 
 
