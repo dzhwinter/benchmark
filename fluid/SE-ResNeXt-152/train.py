@@ -222,6 +222,19 @@ def net_conf(image, label, class_dim):
     return out, avg_cost, accuracy, accuracy5
 
 
+def add_optimizer(args, avg_cost):
+    #optimizer = fluid.optimizer.SGD(learning_rate=0.002)
+    optimizer = fluid.optimizer.Momentum(
+        learning_rate=fluid.layers.piecewise_decay(
+            boundaries=[100], values=[0.1, 0.2]),
+        momentum=0.9,
+        regularization=fluid.regularizer.L2Decay(1e-4))
+    optimizer.minimize(avg_cost)
+
+    if args.use_mem_opt:
+        fluid.memory_optimize(fluid.default_main_program())
+
+
 def train_parallel_do(args):
 
     class_dim = 1000
@@ -253,16 +266,7 @@ def train_parallel_do(args):
         avg_cost = fluid.layers.mean(x=cost)
         accuracy = fluid.layers.accuracy(input=out, label=label)
 
-    #optimizer = fluid.optimizer.SGD(learning_rate=0.002)
-    optimizer = fluid.optimizer.Momentum(
-        learning_rate=fluid.layers.piecewise_decay(
-            boundaries=[100], values=[0.1, 0.2]),
-        momentum=0.9,
-        regularization=fluid.regularizer.L2Decay(1e-4))
-    opts = optimizer.minimize(avg_cost)
-
-    if args.use_mem_opt:
-        fluid.memory_optimize(fluid.default_main_program())
+    add_optimizer(args, avg_cost)
 
     place = fluid.CUDAPlace(0)
     # place = fluid.CPUPlace()
@@ -324,7 +328,7 @@ def train_parallel_exe(args):
 
     with fluid.program_guard(main, startup):
         reader = fluid.layers.open_recordio_file(
-            filename='./flowers.recordio',
+            filename='./flowers_bs_12_3_224_224.recordio',
             shapes=[[-1, 3, 224, 224], [-1, 1]],
             lod_levels=[0, 0],
             dtypes=['float32', 'int64'])
@@ -336,13 +340,7 @@ def train_parallel_exe(args):
         prediction, avg_cost, accuracy, accuracy5 = net_conf(image, label,
                                                              class_dim)
 
-        #optimizer = fluid.optimizer.SGD(learning_rate=0.002)
-        optimizer = fluid.optimizer.Momentum(
-            learning_rate=fluid.layers.piecewise_decay(
-                boundaries=[100], values=[0.1, 0.2]),
-            momentum=0.9,
-            regularization=fluid.regularizer.L2Decay(1e-4))
-        opts = optimizer.minimize(avg_cost)
+        add_optimizer(args, avg_cost)
 
         if args.use_mem_opt:
             fluid.memory_optimize(fluid.default_main_program())

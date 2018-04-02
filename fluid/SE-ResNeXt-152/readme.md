@@ -2,7 +2,7 @@
 
 ## For single card:
 ```
-env CUDA_VISIBLE_DEVICES=4 python train.py --use_parallel_mode=parallel_do --use_nccl=False --parallel=False --display_step=1
+env CUDA_VISIBLE_DEVICES=0 python train.py --use_parallel_mode=parallel_do --use_nccl=False --parallel=False --display_step=1
 ```
 
 ## For multi-card:
