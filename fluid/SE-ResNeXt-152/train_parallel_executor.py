@@ -35,8 +35,9 @@ def parse_args():
     parser.add_argument(
         '--number_iteration',
         type=int,
-        default=10,
+        default=100,
         help='total batch num for per_gpu_batch_size')
+    parser.add_argument('--display_step', type=int, default=1, help='')
 
     args = parser.parse_args()
     return args
@@ -167,7 +168,7 @@ def SE_ResNeXt(input, class_dim, infer=False, layers=152):
 
 
 def net_conf(image, label, class_dim):
-    out = SE_ResNeXt152(input=image, class_dim=class_dim)
+    out = SE_ResNeXt(input=image, class_dim=class_dim)
     cost = fluid.layers.cross_entropy(input=out, label=label)
     avg_cost = fluid.layers.mean(x=cost)
     #accuracy = fluid.evaluator.Accuracy(input=out, label=label)
@@ -195,16 +196,18 @@ def train():
     startup = fluid.Program()
 
     with fluid.program_guard(main, startup):
-        data_file = fluid.layers.open_recordio_file(
-            filename='./resnet_152.recordio_batch_size_12_3_224_224',  #  ./resnet_152.recordio_batch_size_2
+        reader = fluid.layers.open_recordio_file(
+            filename='./flowers.recordio',
             shapes=[[-1, 3, 224, 224], [-1, 1]],
             lod_levels=[0, 0],
             dtypes=['float32', 'int64'])
-        image, label = fluid.layers.read_file(data_file)
+        # currently, double buffer only supports one device.
+        #data_file = fluid.layers.create_double_buffer_reader(reader=data_file, place='CUDA:0')
+        image, label = fluid.layers.read_file(reader)
 
         prediction, avg_cost, accuracy, accuracy5 = net_conf(image, label,
                                                              class_dim)
-
+        #optimizer = fluid.optimizer.SGD(learning_rate=0.002)
         optimizer = fluid.optimizer.Momentum(
             learning_rate=fluid.layers.piecewise_decay(
                 boundaries=[100], values=[0.1, 0.2]),
@@ -217,20 +220,26 @@ def train():
 
         exe = fluid.ParallelExecutor(loss_name=avg_cost.name, use_cuda=True)
 
-        batch_id = 0
+        batch_id = -1
         time_record = []
-        # with profiler.profiler('All', 'total', '/tmp/profile') as prof:
+
         for i in xrange(args.number_iteration):
+            batch_id += 1
+            if batch_id >= 5 and batch_id < 7:
+                with profiler.profiler('All', 'total', '/tmp/profile') as prof:
+                    exe.run([])
+                continue
+
             t1 = time.time()
-            exe.run([avg_cost.name] if batch_id % 10 == 0 else [])
+            cost_val = exe.run([avg_cost.name]
+                               if batch_id % args.display_step == 0 else [])
             t2 = time.time()
             period = t2 - t1
             time_record.append(period)
 
-            if batch_id % 10 == 0:
-                print("trainbatch {0},  time{1}".format(batch_id,
-                                                        "%2.2f sec" % period))
-            batch_id += 1
+            if batch_id % args.display_step == 0:
+                print("iter=%d, elapse=%f, cost=%s" %
+                      (batch_id, period, np.array(cost_val[0])))
 
         del time_record[0]
         for ele in time_record:
