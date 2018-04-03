@@ -122,11 +122,8 @@ def squeeze_excitation(input, num_channels, reduction_ratio):
 
 def shortcut(input, ch_out, stride):
     ch_in = input.shape[1]
-    if ch_in != ch_out:
-        if stride == 1:
-            filter_size = 1
-        else:
-            filter_size = 3
+    if ch_in != ch_out or stride != 1:
+        filter_size = 1
         return conv_bn_layer(input, ch_out, filter_size, stride)
     else:
         return input
@@ -342,10 +339,8 @@ def train_parallel_exe(args):
 
         add_optimizer(args, avg_cost)
 
-        if args.use_mem_opt:
-            fluid.memory_optimize(fluid.default_main_program())
-
-        exe = fluid.ParallelExecutor(loss_name=avg_cost.name, use_cuda=True)
+        exe = fluid.ParallelExecutor(
+            loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
 
         time_record = []
 
