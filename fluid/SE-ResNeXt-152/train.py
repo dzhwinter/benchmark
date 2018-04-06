@@ -70,11 +70,15 @@ def parse_args():
         default=True,
         help='It is valid only when parallel_mode is parallel_do.')
     parser.add_argument(
+        '--use_feeder',
+        type=distutils.util.strtobool,
+        default=False,
+        help='It is valid only when parallel_mode is parallel_exe.')
+    parser.add_argument(
         '--use_python_reader',
         type=distutils.util.strtobool,
-        default=True,
-        help='It is valid only when parallel_mode is parallel_do.'
-        'If use_python_reader is True, python reader is used to feeding data,'
+        default=False,
+        help='If use_python_reader is True, python reader is used to feeding data,'
         'the process includes data transfer from CPU to GPU. Otherwise, '
         'the data which will be needed for training is in GPU side constantly.')
 
@@ -320,10 +324,23 @@ def train_parallel_exe(args):
     class_dim = 1000
     image_shape = [3, 224, 224]
 
-    main = fluid.Program()
-    startup = fluid.Program()
+    #main = fluid.Program()
+    #startup = fluid.Program()
 
-    with fluid.program_guard(main, startup):
+    #with fluid.program_guard(main, startup):
+    if args.with_feeder:
+        image = fluid.layers.data(
+            name='image', shape=image_shape, dtype='float32')
+        label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+
+        place = fluid.CUDAPlace(0)
+        train_reader = paddle.batch(flowers.train(), batch_size=args.batch_size)
+        feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
+        train_reader_iter = train_reader()
+        if not args.use_python_reader:
+            data = train_reader_iter.next()
+            feed_dict = feeder.feed(data)
+    else:
         reader = fluid.layers.open_recordio_file(
             filename='./flowers_bs_12_3_224_224.recordio',
             shapes=[[-1, 3, 224, 224], [-1, 1]],
@@ -334,42 +351,54 @@ def train_parallel_exe(args):
         #data_file = fluid.layers.create_double_buffer_reader(reader=data_file, place='CUDA:0')
         image, label = fluid.layers.read_file(reader)
 
-        prediction, avg_cost, accuracy, accuracy5 = net_conf(image, label,
-                                                             class_dim)
+    prediction, avg_cost, accuracy, accuracy5 = net_conf(image, label,
+                                                         class_dim)
 
-        add_optimizer(args, avg_cost)
+    add_optimizer(args, avg_cost)
 
-        exe = fluid.ParallelExecutor(
-            loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
+    exe = fluid.ParallelExecutor(
+        loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
 
-        time_record = []
+    time_record = []
 
-        for batch_id in xrange(args.number_iteration):
+    for batch_id in xrange(args.number_iteration):
 
-            if args.do_profile and batch_id >= 5 and batch_id < 8:
-                with profiler.profiler('All', 'total',
-                                       '/tmp/profile_parallel_exe') as prof:
-                    exe.run([])
-                continue
+        if args.do_profile and batch_id >= 5 and batch_id < 8:
+            with profiler.profiler('All', 'total',
+                                   '/tmp/profile_parallel_exe') as prof:
+                if not args.with_feeder:
+                    cost_val = exe.run([])
+                else:
+                    cost_val = exe.run(
+                        [],
+                        feed=feeder.feed(train_reader_iter.next())
+                        if args.use_python_reader else feed_dict)
+            continue
 
-            t1 = time.time()
+        t1 = time.time()
+        if not args.with_feeder:
             cost_val = exe.run([avg_cost.name]
                                if batch_id % args.display_step == 0 else [])
-            t2 = time.time()
-            period = t2 - t1
-            time_record.append(period)
+        else:
+            cost_val = exe.run([avg_cost.name]
+                               if batch_id % args.display_step == 0 else [],
+                               feed_dict=feeder.feed(train_reader_iter.next())
+                               if args.use_python_reader else feed_dict)
+        t2 = time.time()
+        period = t2 - t1
+        time_record.append(period)
 
-            if batch_id % args.display_step == 0:
-                print("iter=%d, elapse=%f, cost=%s" %
-                      (batch_id, period, np.array(cost_val[0])))
+        if batch_id % args.display_step == 0:
+            print("iter=%d, elapse=%f, cost=%s" %
+                  (batch_id, period, np.array(cost_val[0])))
 
-        for _ in range(args.skip_first_steps):
-            del time_record[0]
+    for _ in range(args.skip_first_steps):
+        del time_record[0]
 
-        for ele in time_record:
-            print ele
+    for ele in time_record:
+        print ele
 
-        print("average time:{0}".format(np.mean(time_record)))
+    print("average time:{0}".format(np.mean(time_record)))
 
 
 if __name__ == '__main__':
