@@ -328,7 +328,7 @@ def train_parallel_exe(args):
     #startup = fluid.Program()
 
     #with fluid.program_guard(main, startup):
-    if args.with_feeder:
+    if args.use_feeder:
         image = fluid.layers.data(
             name='image', shape=image_shape, dtype='float32')
         label = fluid.layers.data(name='label', shape=[1], dtype='int64')
@@ -366,7 +366,7 @@ def train_parallel_exe(args):
         if args.do_profile and batch_id >= 5 and batch_id < 8:
             with profiler.profiler('All', 'total',
                                    '/tmp/profile_parallel_exe') as prof:
-                if not args.with_feeder:
+                if not args.use_feeder:
                     cost_val = exe.run([])
                 else:
                     cost_val = exe.run(
@@ -376,7 +376,7 @@ def train_parallel_exe(args):
             continue
 
         t1 = time.time()
-        if not args.with_feeder:
+        if not args.use_feeder:
             cost_val = exe.run([avg_cost.name]
                                if batch_id % args.display_step == 0 else [])
         else:
