@@ -14,7 +14,7 @@ SEED = 1
 DTYPE = "float32"
 
 # random seed must set before configuring the network.
-# fluid.default_startup_program().random_seed = SEED
+fluid.default_startup_program().random_seed = SEED
 
 
 def parse_args():
@@ -157,8 +157,6 @@ def run_benchmark(model, args):
             if iters == args.skip_batch_num:
                 start_time = time.time()
                 num_samples = 0
-            if iters == args.iterations:
-                break
             img_data = np.array(
                 map(lambda x: x[0].reshape([1, 28, 28]), data)).astype(DTYPE)
             y_data = np.array(map(lambda x: x[1], data)).astype("int64")
@@ -191,7 +189,11 @@ def run_benchmark(model, args):
         if args.with_test:
             test_avg_acc = eval_test(exe, batch_acc, batch_size_tensor,
                                      inference_program)
-        exit(0)
+            print("Pass: %d, Test Accuray: %f\n" % (pass_id, test_avg_acc))
+        if iters == args.iterations:
+            break
+
+        #exit(0)
 
 
 def print_arguments(args):

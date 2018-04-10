@@ -95,11 +95,10 @@ def eval_test(exe, batch_acc, batch_size_tensor, inference_program):
         y_data = np.array(map(lambda x: x[1], data)).astype("int64")
         y_data = y_data.reshape([len(y_data), 1])
 
-        acc, weight = exe.run(inference_program,
-                              feed={"pixel": img_data,
-                                    "label": y_data},
-                              fetch_list=[batch_acc, batch_size_tensor])
-        test_pass_acc.add(value=acc, weight=weight)
+        acc, weight = exe.run([batch_acc.name, batch_size_tensor.name],
+                              feed_dict={"pixel": img_data,
+                                         "label": y_data})
+        test_pass_acc.add(value=np.array(acc), weight=np.array(weight))
         pass_acc = test_pass_acc.eval()
     return pass_acc
 
@@ -142,8 +141,15 @@ def run_benchmark(model, args):
 
     fluid.memory_optimize(fluid.default_main_program())
 
+    place = fluid.CUDAPlace(0)
+    exe = fluid.Executor(place)
+    exe.run(fluid.default_startup_program())
+
     exe = fluid.ParallelExecutor(
         loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
+
+    test_exe = fluid.ParallelExecutor(
+        use_cuda=True, main_program=inference_program, share_vars_from=exe)
 
     # Reader
     train_reader = paddle.batch(
@@ -190,9 +196,13 @@ def run_benchmark(model, args):
               (num_samples, train_elapsed, examples_per_sec))
         # evaluation
         if args.with_test:
-            test_avg_acc = eval_test(exe, batch_acc, batch_size_tensor,
+            test_avg_acc = eval_test(test_exe, batch_acc, batch_size_tensor,
                                      inference_program)
-        exit(0)
+            print("Pass: %d, Test Accuray: %f\n" % (pass_id, test_avg_acc))
+
+        if iters == args.iterations:
+            break
+        #exit(0)
 
 
 def print_arguments(args):
