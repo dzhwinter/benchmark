@@ -25,5 +25,5 @@ env CUDA_VISIBLE_DEVICES=4,5,6,7 python train.py --use_parallel_mode=parallel_ex
 ```
 #### use parallel_exe (use feeder and use_python_readear, data flow: CPU->GPU->Training)  
 ```
-env CUDA_VISIBLE_DEVICES=4,5,6,7 python train.py --use_parallel_mode=parallel_exe --with_feeder=true --use_python_reader=true --do_profile=false --display_step=1
+env CUDA_VISIBLE_DEVICES=4,5,6,7 python train.py --use_parallel_mode=parallel_exe --use_feeder=true --use_python_reader=true --do_profile=false --display_step=1
 ```
