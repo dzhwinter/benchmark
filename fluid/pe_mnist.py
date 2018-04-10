@@ -142,10 +142,8 @@ def run_benchmark(model, args):
 
     fluid.memory_optimize(fluid.default_main_program())
 
-    ##################
     exe = fluid.ParallelExecutor(
         loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
-    ##################
 
     # Reader
     train_reader = paddle.batch(
