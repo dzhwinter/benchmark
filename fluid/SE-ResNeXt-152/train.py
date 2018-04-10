@@ -356,6 +356,10 @@ def train_parallel_exe(args):
 
     add_optimizer(args, avg_cost)
 
+    place = fluid.CUDAPlace(0)
+    exe = fluid.Executor(place)
+    exe.run(fluid.default_startup_program())
+
     exe = fluid.ParallelExecutor(
         loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
 
