@@ -1,3 +1,5 @@
+# Warning
+This repo is migrated to https://github.com/PaddlePaddle/Paddle/tree/develop/benchmark. Please check it out.
 # Benchmark of opensource Platforms
 Machine:
 
@@ -77,4 +79,3 @@ To validate the Fluid performance on general models, we choose the models in boo
 | 06.understand_sentiment |            |                |               |             |            |                |               |             |
 | 07.label_semantic_roles |            |                |               |             |            |                |               |             |
 | 08.machine_translation  |            |                |               |             |            |                |               |             |
-
