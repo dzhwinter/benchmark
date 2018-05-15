@@ -29,15 +29,13 @@ fluid.default_startup_program().random_seed = 111
 def parse_args():
     parser = argparse.ArgumentParser('SE-ResNeXt-152 parallel profile.')
     parser.add_argument(
-        '--class_number', type=int, default=1000, help='the class number')
-    parser.add_argument(
-        '--use_parallel_mode',
+        '--parallel_mode',
         type=str,
         default='parallel_exe',
         choices=['parallel_do', 'parallel_exe'],
         help='The parallel mode("parallel_do" or "parallel_exe").')
     parser.add_argument('--batch_size', type=int, default=12, help='batch size')
-    parser.add_argument('--per_gpu_batch_size', type=int, default=12, help='')
+    parser.add_argument('--batch_size_per_gpu', type=int, default=12, help='')
     parser.add_argument(
         '--use_mem_opt',
         type=distutils.util.strtobool,
@@ -46,41 +44,31 @@ def parse_args():
     parser.add_argument(
         '--do_profile',
         type=distutils.util.strtobool,
-        default=True,
+        default=False,
         help='do profile or not.')
+    parser.add_argument('--number_iteration', type=int, default=150, help='')
+    parser.add_argument('--display_step', type=int, default=10, help='')
+    parser.add_argument('--skip_first_steps', type=int, default=30, help='.')
     parser.add_argument(
-        '--number_iteration',
-        type=int,
-        default=50,
-        help='total batch num for per_gpu_batch_size.')
-    parser.add_argument('--display_step', type=int, default=1, help='')
-    parser.add_argument(
-        '--skip_first_steps',
-        type=int,
-        default=2,
-        help='The first num of steps to skip, for better performance profile.')
-    parser.add_argument(
-        '--parallel',
+        '--fix_data_in_gpu',
         type=distutils.util.strtobool,
         default=True,
-        help='It is valid only when parallel_mode is parallel_do.')
+        help='')
     parser.add_argument(
-        '--use_nccl',
-        type=distutils.util.strtobool,
-        default=True,
-        help='It is valid only when parallel_mode is parallel_do.')
-    parser.add_argument(
-        '--use_feeder',
+        '--use_recordio',
         type=distutils.util.strtobool,
         default=False,
-        help='It is valid only when parallel_mode is parallel_exe.')
+        help='.')
     parser.add_argument(
-        '--use_python_reader',
+        '--balance_parameter_opt_between_cards',
         type=distutils.util.strtobool,
         default=False,
-        help='If use_python_reader is True, python reader is used to feeding data,'
-        'the process includes data transfer from CPU to GPU. Otherwise, '
-        'the data which will be needed for training is in GPU side constantly.')
+        help='balance parameter opt between cards')
+    parser.add_argument(
+        '--show_record_time',
+        type=distutils.util.strtobool,
+        default=False,
+        help='')
 
     args = parser.parse_args()
     return args
@@ -88,13 +76,8 @@ def parse_args():
 
 def print_arguments(args):
     print('-----------  Configuration Arguments -----------')
-    if args.use_parallel_mode == "parallel_do":
-        for arg, value in sorted(vars(args).iteritems()):
-            print('%s=%s' % (arg, value))
-    else:
-        args.use_nccl = True
-        for arg, value in sorted(vars(args).iteritems()):
-            print('%s=%s' % (arg, value))
+    for arg, value in sorted(vars(args).iteritems()):
+        print('%s=%s' % (arg, value))
 
 
 def conv_bn_layer(input, num_filters, filter_size, stride=1, groups=1,
@@ -216,8 +199,6 @@ def net_conf(image, label, class_dim):
     out = SE_ResNeXt(input=image, class_dim=class_dim)
     cost = fluid.layers.cross_entropy(input=out, label=label)
     avg_cost = fluid.layers.mean(x=cost)
-    #accuracy = fluid.evaluator.Accuracy(input=out, label=label)
-    #accuracy5 = fluid.evaluator.Accuracy(input=out, label=label, k=5)
     accuracy = fluid.layers.accuracy(input=out, label=label)
     accuracy5 = fluid.layers.accuracy(input=out, label=label, k=5)
     return out, avg_cost, accuracy, accuracy5
@@ -244,33 +225,26 @@ def train_parallel_do(args):
     image = fluid.layers.data(name='image', shape=image_shape, dtype='float32')
     label = fluid.layers.data(name='label', shape=[1], dtype='int64')
 
-    if args.parallel:
-        places = fluid.layers.get_places()
-        pd = fluid.layers.ParallelDo(places, use_nccl=args.use_nccl)
+    places = fluid.layers.get_places()
+    pd = fluid.layers.ParallelDo(places, use_nccl=True)
 
-        with pd.do():
-            image_ = pd.read_input(image)
-            label_ = pd.read_input(label)
-            out = SE_ResNeXt(input=image_, class_dim=class_dim)
-            cost = fluid.layers.cross_entropy(input=out, label=label_)
-            avg_cost = fluid.layers.mean(x=cost)
-            accuracy = fluid.layers.accuracy(input=out, label=label_)
-            pd.write_output(avg_cost)
-            pd.write_output(accuracy)
-
-        avg_cost, accuracy = pd()
-        avg_cost = fluid.layers.mean(x=avg_cost)
-        accuracy = fluid.layers.mean(x=accuracy)
-    else:
-        out = SE_ResNeXt(input=image, class_dim=class_dim)
-        cost = fluid.layers.cross_entropy(input=out, label=label)
+    with pd.do():
+        image_ = pd.read_input(image)
+        label_ = pd.read_input(label)
+        out = SE_ResNeXt(input=image_, class_dim=class_dim)
+        cost = fluid.layers.cross_entropy(input=out, label=label_)
         avg_cost = fluid.layers.mean(x=cost)
-        accuracy = fluid.layers.accuracy(input=out, label=label)
+        accuracy = fluid.layers.accuracy(input=out, label=label_)
+        pd.write_output(avg_cost)
+        pd.write_output(accuracy)
+
+    avg_cost, accuracy = pd()
+    avg_cost = fluid.layers.mean(x=avg_cost)
+    # accuracy = fluid.layers.mean(x=accuracy)
 
     add_optimizer(args, avg_cost)
 
     place = fluid.CUDAPlace(0)
-    # place = fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
@@ -278,45 +252,58 @@ def train_parallel_do(args):
 
     feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
     train_reader_iter = train_reader()
-    if not args.use_python_reader:
+    if args.fix_data_in_gpu:
         data = train_reader_iter.next()
-        feed_dict = feeder.feed(data)
+        feed_data = feeder.feed(data)
 
     time_record = []
+    img_count = 0
+    train_start = time.time()
 
     for batch_id in range(args.number_iteration):
         if args.do_profile and batch_id >= 5 and batch_id < 8:
             with profiler.profiler('All', 'total',
                                    '/tmp/profile_parallel_do') as prof:
                 exe.run(fluid.default_main_program(),
-                        feed=feeder.feed(train_reader_iter.next())
-                        if args.use_python_reader else feed_dict,
+                        feed=feed_data if args.fix_data_in_gpu else
+                        feeder.feed(train_reader_iter.next()),
                         fetch_list=[],
                         use_program_cache=True)
             continue
 
-        train_start = time.time()
         cost_val = exe.run(fluid.default_main_program(),
-                           feed=feeder.feed(train_reader_iter.next())
-                           if args.use_python_reader else feed_dict,
+                           feed=feed_data if args.fix_data_in_gpu else
+                           feeder.feed(train_reader_iter.next()),
                            fetch_list=[avg_cost.name]
-                           if batch_id % args.display_step == 0 else [],
+                           if (batch_id + 1) % args.display_step == 0 else [],
                            use_program_cache=True)
-        train_stop = time.time()
-        step_time = train_stop - train_start
-        time_record.append(step_time)
 
-        if batch_id % args.display_step == 0:
-            print("iter=%d, elapse=%f, cost=%s" %
-                  (batch_id, step_time, np.array(cost_val[0])))
+        img_count += args.batch_size
 
-    for _ in range(args.skip_first_steps):
-        del time_record[0]
+        if (batch_id + 1) % args.display_step == 0:
+            train_stop = time.time()
+            step_time = train_stop - train_start
+            time_record.append(step_time)
 
-    for ele in time_record:
-        print ele
+            print("iter=%d, cost=%s, elapse=%f, img/sec=%f" %
+                  ((batch_id + 1), np.array(cost_val[0]), step_time,
+                   img_count / step_time))
 
-    print("average time:{0}".format(np.mean(time_record)))
+            img_count = 0
+            train_start = time.time()
+
+    skip_time_record = args.skip_first_steps / args.display_step
+    time_record[0:skip_time_record] = []
+
+    if args.show_record_time:
+        for i, ele in enumerate(time_record):
+            print("iter:{0}, time consume:{1}".format(i, ele))
+
+    img_count = (
+        args.number_iteration - args.skip_first_steps) * args.batch_size
+
+    print("average time:{0}, img/sec:{1}".format(
+        np.mean(time_record), img_count / np.sum(time_record)))
 
 
 def train_parallel_exe(args):
@@ -324,32 +311,29 @@ def train_parallel_exe(args):
     class_dim = 1000
     image_shape = [3, 224, 224]
 
-    #main = fluid.Program()
-    #startup = fluid.Program()
-
-    #with fluid.program_guard(main, startup):
-    if args.use_feeder:
-        image = fluid.layers.data(
-            name='image', shape=image_shape, dtype='float32')
-        label = fluid.layers.data(name='label', shape=[1], dtype='int64')
-
-        place = fluid.CUDAPlace(0)
-        train_reader = paddle.batch(flowers.train(), batch_size=args.batch_size)
-        feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
-        train_reader_iter = train_reader()
-        if not args.use_python_reader:
-            data = train_reader_iter.next()
-            feed_dict = feeder.feed(data)
-    else:
+    if args.use_recordio:
         reader = fluid.layers.open_recordio_file(
             filename='./flowers_bs_12_3_224_224.recordio',
             shapes=[[-1, 3, 224, 224], [-1, 1]],
             lod_levels=[0, 0],
             dtypes=['float32', 'int64'])
-
-        # currently, double buffer only supports one device.
-        #data_file = fluid.layers.create_double_buffer_reader(reader=data_file, place='CUDA:0')
         image, label = fluid.layers.read_file(reader)
+    else:
+        image = fluid.layers.data(
+            name='image', shape=image_shape, dtype='float32')
+        label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+
+        place = fluid.CUDAPlace(0)
+        feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
+        train_reader = feeder.decorate_reader(
+            paddle.batch(
+                flowers.train(), batch_size=args.batch_size_per_gpu),
+            multi_devices=True)
+
+        train_reader_iter = train_reader()
+        if args.fix_data_in_gpu:
+            data = train_reader_iter.next()
+            feed_data = data
 
     prediction, avg_cost, accuracy, accuracy5 = net_conf(image, label,
                                                          class_dim)
@@ -360,49 +344,68 @@ def train_parallel_exe(args):
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
+    exec_strategy = fluid.ExecutionStrategy()
+    exec_strategy.allow_op_delay = True
+
+    build_strategy = fluid.BuildStrategy()
+    build_strategy.reduce_strategy = fluid.BuildStrategy.ReduceStrategy.Reduce if args.balance_parameter_opt_between_cards else fluid.BuildStrategy.ReduceStrategy.AllReduce
+
     exe = fluid.ParallelExecutor(
-        loss_name=avg_cost.name, use_cuda=True, allow_op_delay=True)
+        loss_name=avg_cost.name,
+        use_cuda=True,
+        build_strategy=build_strategy,
+        exec_strategy=exec_strategy)
 
     time_record = []
-
+    train_start = time.time()
+    img_count = 0
     for batch_id in xrange(args.number_iteration):
-
         if args.do_profile and batch_id >= 5 and batch_id < 8:
             with profiler.profiler('All', 'total',
                                    '/tmp/profile_parallel_exe') as prof:
-                if not args.use_feeder:
-                    cost_val = exe.run([])
+                if args.use_recordio:
+                    exe.run([])
                 else:
-                    cost_val = exe.run(
-                        [],
-                        feed=feeder.feed(train_reader_iter.next())
-                        if args.use_python_reader else feed_dict)
+                    exe.run([],
+                            feed=feed_data if args.fix_data_in_gpu else
+                            feeder.feed(train_reader_iter.next()))
             continue
 
-        t1 = time.time()
-        if not args.use_feeder:
-            cost_val = exe.run([avg_cost.name]
-                               if batch_id % args.display_step == 0 else [])
+        if args.use_recordio:
+            cost_val = exe.run([avg_cost.name] if (batch_id + 1) %
+                               args.display_step == 0 else [])
         else:
-            cost_val = exe.run([avg_cost.name]
-                               if batch_id % args.display_step == 0 else [],
-                               feed_dict=feeder.feed(train_reader_iter.next())
-                               if args.use_python_reader else feed_dict)
-        t2 = time.time()
-        period = t2 - t1
-        time_record.append(period)
+            cost_val = exe.run([avg_cost.name] if
+                               (batch_id + 1) % args.display_step == 0 else [],
+                               feed=feed_data if args.fix_data_in_gpu else
+                               feeder.feed(train_reader_iter.next()))
 
-        if batch_id % args.display_step == 0:
-            print("iter=%d, elapse=%f, cost=%s" %
-                  (batch_id, period, np.array(cost_val[0])))
+        img_count += args.batch_size
 
-    for _ in range(args.skip_first_steps):
-        del time_record[0]
+        if (batch_id + 1) % args.display_step == 0:
+            train_stop = time.time()
+            step_time = train_stop - train_start
+            time_record.append(step_time)
 
-    for ele in time_record:
-        print ele
+            print("iter=%d, cost=%s, elapse=%f, img/sec=%f" %
+                  ((batch_id + 1), np.array(cost_val[0]), step_time,
+                   img_count / step_time))
 
-    print("average time:{0}".format(np.mean(time_record)))
+            img_count = 0
+            train_start = time.time()
+
+    skip_time_record = args.skip_first_steps / args.display_step
+    time_record[0:skip_time_record] = []
+
+    if args.show_record_time:
+        for i, ele in enumerate(time_record):
+            print("iter:{0}, time consume:{1}".format(i, ele))
+
+    img_count = (
+        args.number_iteration - args.skip_first_steps) * args.batch_size
+
+    print("average time:{0}, img/sec:{1}".format(
+        np.mean(time_record), img_count / np.sum(time_record)))
 
 
 if __name__ == '__main__':
@@ -410,12 +413,12 @@ if __name__ == '__main__':
 
     cards = os.getenv("CUDA_VISIBLE_DEVICES") or ""
     cards_num = len(cards.split(","))
-    args.batch_size = args.per_gpu_batch_size * cards_num
+    args.batch_size = args.batch_size_per_gpu * cards_num
 
     print_arguments(args)
     print("cards_num=" + str(cards_num))
 
-    if args.use_parallel_mode == "parallel_do":
+    if args.parallel_mode == "parallel_do":
         train_parallel_do(args)
     else:
         train_parallel_exe(args)
