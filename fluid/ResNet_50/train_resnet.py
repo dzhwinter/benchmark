@@ -21,7 +21,7 @@ import numpy as np
 from models import resnet
 import paddle
 import paddle.fluid as fluid
-import paddle.dataset.flowers as flowers
+# import paddle.dataset.flowers as flowers
 import paddle.fluid.profiler as profiler
 
 fluid.default_startup_program().random_seed = 111
@@ -42,6 +42,7 @@ def parse_args():
         default=False,
         help='do profile or not.')
     parser.add_argument('--number_iteration', type=int, default=150, help='')
+    parser.add_argument('--pass_num', type=int, default=10, help='')
     parser.add_argument('--display_step', type=int, default=10, help='')
     parser.add_argument('--skip_first_steps', type=int, default=30, help='')
     parser.add_argument('--warmup', type=int, default=20, help='')
@@ -76,6 +77,32 @@ def print_arguments(args):
         print('%s=%s' % (arg, value))
 
 
+def fake_reader():
+    while True:
+        img = np.random.rand(3, 224, 224)
+        lab = np.random.randint(0, 101)
+        yield img, lab
+
+
+def train():
+    return fake_reader
+
+
+def generate_recordio(data_shape, data_set_iterator, output_file, batch_size=1):
+    with fluid.program_guard(fluid.Program(), fluid.Program()):
+        reader = paddle.batch(data_set_iterator(), batch_size=batch_size)
+    feeder = fluid.DataFeeder(
+        feed_list=[
+            fluid.layers.data(
+                name='data', shape=data_shape, dtype='float32'),
+            fluid.layers.data(
+                name='label', shape=[1], dtype='int64'),
+        ],
+        place=fluid.CPUPlace())
+    fluid.recordio_writer.convert_reader_to_recordio_file(output_file, reader,
+                                                          feeder)
+
+
 def net_conf(image, label, class_dim):
     out = resnet.resnet_imagenet(input=image, class_dim=class_dim)
     cost = fluid.layers.cross_entropy(input=out, label=label)
@@ -92,27 +119,34 @@ def add_optimizer(args, avg_cost):
 
 
 def train_parallel_exe(args):
-
-    class_dim = 1000
+    class_dim = 102
     image_shape = [3, 224, 224]
 
-    image = fluid.layers.data(name='image', shape=image_shape, dtype='float32')
-    label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+    if args.use_recordio:
+        recordio_name = './flowers_1.recordio'
+        if not os.path.exists(recordio_name):
+            data_set_iterator = paddle.dataset.flowers.train
+            print("generate {0} ... ".format(recordio_name))
+            generate_recordio(image_shape, data_set_iterator, recordio_name)
 
-    place = fluid.CUDAPlace(0)
-    feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
-    train_reader = feeder.decorate_reader(
-        paddle.batch(
-            flowers.train(), batch_size=args.batch_size_per_gpu),
-        multi_devices=True)
-
-    train_reader_iter = train_reader()
-    if args.fix_data_in_gpu:
-        data = train_reader_iter.next()
-        feed_data = data
+        file_list = [recordio_name] * 8
+        data_file = fluid.layers.io.open_files(
+            filenames=file_list,
+            shapes=[[-1] + image_shape, [-1, 1]],
+            lod_levels=[0, 0],
+            dtypes=['float32', 'int64'],
+            thread_num=4,
+            pass_num=args.pass_num)
+        data_file = fluid.layers.io.batch(
+            data_file, batch_size=args.batch_size_per_gpu)
+        data_file = fluid.layers.io.double_buffer(data_file)
+        image, label = fluid.layers.io.read_file(data_file)
+    else:
+        image = fluid.layers.data(
+            name='image', shape=image_shape, dtype='float32')
+        label = fluid.layers.data(name='label', shape=[1], dtype='int64')
 
     prediction, avg_cost = net_conf(image, label, class_dim)
-
     add_optimizer(args, avg_cost)
 
     place = fluid.CUDAPlace(0)
@@ -121,7 +155,6 @@ def train_parallel_exe(args):
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.allow_op_delay = True
-
     build_strategy = fluid.BuildStrategy()
     build_strategy.reduce_strategy = fluid.BuildStrategy.ReduceStrategy.Reduce if args.balance_parameter_opt_between_cards else fluid.BuildStrategy.ReduceStrategy.AllReduce
 
@@ -131,11 +164,22 @@ def train_parallel_exe(args):
         build_strategy=build_strategy,
         exec_strategy=exec_strategy)
 
+    feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
+    train_reader = feeder.decorate_reader(
+        paddle.batch(
+            train(), batch_size=args.batch_size_per_gpu),
+        multi_devices=True)
+
+    train_reader_iter = train_reader()
+    if args.fix_data_in_gpu:
+        data = train_reader_iter.next()
+        feed_data = data
+
     # warm up
     for batch_id in xrange(args.warmup):
         exe.run([],
-                feed=feed_data if args.fix_data_in_gpu else
-                feeder.feed(train_reader_iter.next()))
+                feed=feed_data
+                if args.fix_data_in_gpu else train_reader_iter.next())
 
     time_record = []
     train_start = time.time()
@@ -144,15 +188,23 @@ def train_parallel_exe(args):
         if args.do_profile and batch_id >= 5 and batch_id < 8:
             with profiler.profiler('All', 'total',
                                    '/tmp/profile_parallel_exe') as prof:
-                exe.run([],
-                        feed=feed_data if args.fix_data_in_gpu else
-                        feeder.feed(train_reader_iter.next()))
+                if args.use_recordio:
+                    exe.run([])
+                else:
+                    exe.run([],
+                            feed=feed_data if args.fix_data_in_gpu else
+                            train_reader_iter.next())
             continue
 
-        cost_val = exe.run([avg_cost.name]
-                           if (batch_id + 1) % args.display_step == 0 else [],
-                           feed=feed_data if args.fix_data_in_gpu else
-                           feeder.feed(train_reader_iter.next()))
+        if args.use_recordio:
+            cost_val = exe.run([avg_cost.name] if (batch_id + 1) %
+                               args.display_step == 0 else [])
+        else:
+            cost_val = exe.run(
+                [avg_cost.name]
+                if (batch_id + 1) % args.display_step == 0 else [],
+                feed=feed_data
+                if args.fix_data_in_gpu else train_reader_iter.next())
 
         img_count += args.batch_size
 
