@@ -196,7 +196,11 @@ def SE_ResNeXt(input, class_dim, infer=False, layers=152):
 
 
 def net_conf(image, label, class_dim):
+    print("startup ops : ", len(fluid.default_startup_program().block(0).ops))
+    print("main ops : ", len(fluid.default_main_program().block(0).ops))
     out = SE_ResNeXt(input=image, class_dim=class_dim)
+    print("startup ops : ", len(fluid.default_startup_program().block(0).ops))
+    print("main ops : ", len(fluid.default_main_program().block(0).ops))
     cost = fluid.layers.cross_entropy(input=out, label=label)
     avg_cost = fluid.layers.mean(x=cost)
     accuracy = fluid.layers.accuracy(input=out, label=label)
@@ -206,12 +210,26 @@ def net_conf(image, label, class_dim):
 
 def add_optimizer(args, avg_cost):
     #optimizer = fluid.optimizer.SGD(learning_rate=0.002)
+    print("before optimize")
+    print("startup ops : ", len(fluid.default_startup_program().block(0).ops))
+    print("main ops : ", len(fluid.default_main_program().block(0).ops))
+    # optimizer = fluid.optimizer.Momentum(
+    #     learning_rate=fluid.layers.piecewise_decay(
+    #         boundaries=[100], values=[0.1, 0.2]),
+    #     momentum=0.9,
+    #     regularization=fluid.regularizer.L2Decay(1e-4))
+    # print("startup parameters : ", len(fluid.default_startup_program().block(0).all_parameters()))
+    # print("main parameters : ", len(fluid.default_main_program().block(0).all_parameters()))
     optimizer = fluid.optimizer.Momentum(
-        learning_rate=fluid.layers.piecewise_decay(
-            boundaries=[100], values=[0.1, 0.2]),
+        learning_rate=0.01,
         momentum=0.9,
         regularization=fluid.regularizer.L2Decay(1e-4))
     optimizer.minimize(avg_cost)
+    print("after optimize")
+    # print("startup parameters : ", len(fluid.default_startup_program().block(0).all_parameters()))
+    # print("main parameters : ", len(fluid.default_main_program().block(0).all_parameters()))
+    print("startup ops : ", len(fluid.default_startup_program().block(0).ops))
+    print("main ops : ", len(fluid.default_main_program().block(0).ops))
 
     if args.use_mem_opt:
         fluid.memory_optimize(fluid.default_main_program())
@@ -350,6 +368,10 @@ def train_parallel_exe(args):
     build_strategy = fluid.BuildStrategy()
     build_strategy.reduce_strategy = fluid.BuildStrategy.ReduceStrategy.Reduce if args.balance_parameter_opt_between_cards else fluid.BuildStrategy.ReduceStrategy.AllReduce
 
+    print("startup ops : ", len(fluid.default_startup_program().block(0).ops))
+    print("main ops : ", len(fluid.default_main_program().block(0).ops))
+    exit(0)
+
     exe = fluid.ParallelExecutor(
         loss_name=avg_cost.name,
         use_cuda=True,
@@ -418,7 +440,7 @@ if __name__ == '__main__':
     print_arguments(args)
     print("cards_num=" + str(cards_num))
 
-    if args.parallel_mode == "parallel_do":
-        train_parallel_do(args)
-    else:
-        train_parallel_exe(args)
+    # if args.parallel_mode == "parallel_do":
+    #     train_parallel_do(args)
+    # else:
+    train_parallel_exe(args)

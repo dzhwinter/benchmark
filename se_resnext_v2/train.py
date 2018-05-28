@@ -62,6 +62,7 @@ def train_parallel_exe(learning_rate,
     place = fluid.CUDAPlace(0)
 
     exe = fluid.Executor(place)
+    print(len(fluid.default_startup_program().block(0).ops))
     exe.run(fluid.default_startup_program())
 
     train_reader = paddle.batch(
@@ -84,6 +85,8 @@ def train_parallel_exe(learning_rate,
                                       data)).astype('float64')
             label_data = np.array(map(lambda x: x[1], data)).astype('int64')
             label_data = label_data.reshape([-1, 1])
+            print(len(fluid.default_main_program().block(0).ops))
+            exit(0)
             ret_numpy = exe.run(
                 fluid.default_main_program(),
                 feed={'image': image_data,
@@ -115,9 +118,16 @@ def train_parallel_exe(learning_rate,
 if __name__ == '__main__':
     lr_strategy = None
     method = train_parallel_exe
+    # method(
+    #     learning_rate=0.1,
+    #     batch_size=16,
+    #     num_passes=5,
+    #     lr_strategy=lr_strategy,
+    #     layers=50)
+
     method(
         learning_rate=0.1,
         batch_size=16,
         num_passes=5,
         lr_strategy=lr_strategy,
-        layers=50)
+        layers=152)
