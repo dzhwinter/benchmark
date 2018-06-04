@@ -34,41 +34,25 @@ def parse_args():
         default='parallel_exe',
         choices=['parallel_do', 'parallel_exe'],
         help='The parallel mode("parallel_do" or "parallel_exe").')
-    parser.add_argument('--batch_size', type=int, default=12, help='batch size')
-    parser.add_argument('--batch_size_per_gpu', type=int, default=12, help='')
+    parser.add_argument('--batch_size', type=int, default=16, help='batch size')
+    parser.add_argument('--batch_size_per_gpu', type=int, default=16, help='')
     parser.add_argument(
         '--use_mem_opt',
-        type=distutils.util.strtobool,
-        default=True,
+        action='store_true',
         help='use memory optimize or not.')
     parser.add_argument(
-        '--do_profile',
-        type=distutils.util.strtobool,
-        default=False,
-        help='do profile or not.')
+        '--do_profile', action='store_true', help='do profile or not.')
     parser.add_argument('--number_iteration', type=int, default=150, help='')
     parser.add_argument('--display_step', type=int, default=10, help='')
     parser.add_argument('--skip_first_steps', type=int, default=30, help='.')
-    parser.add_argument(
-        '--fix_data_in_gpu',
-        type=distutils.util.strtobool,
-        default=True,
-        help='')
-    parser.add_argument(
-        '--use_recordio',
-        type=distutils.util.strtobool,
-        default=False,
-        help='.')
+    parser.add_argument('--fix_data_in_gpu', action='store_true', help='')
+    parser.add_argument('--use_recordio', action='store_true', help='.')
     parser.add_argument(
         '--balance_parameter_opt_between_cards',
-        type=distutils.util.strtobool,
-        default=False,
+        action='store_true',
         help='balance parameter opt between cards')
-    parser.add_argument(
-        '--show_record_time',
-        type=distutils.util.strtobool,
-        default=False,
-        help='')
+    parser.add_argument('--show_record_time', action='store_true', help='')
+    parser.add_argument('--use_fake_reader', action='store_true', help='')
 
     args = parser.parse_args()
     return args
@@ -217,6 +201,17 @@ def add_optimizer(args, avg_cost):
         fluid.memory_optimize(fluid.default_main_program())
 
 
+def fake_reader():
+    while True:
+        img = np.random.rand(3, 224, 224)
+        lab = np.random.randint(0, 999)
+        yield img, lab
+
+
+def train():
+    return fake_reader
+
+
 def train_parallel_do(args):
 
     class_dim = 1000
@@ -248,7 +243,9 @@ def train_parallel_do(args):
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
-    train_reader = paddle.batch(flowers.train(), batch_size=args.batch_size)
+    train_reader = paddle.batch(
+        train() if args.use_fake_reader else flowers.train(),
+        batch_size=args.batch_size)
 
     feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
     train_reader_iter = train_reader()
@@ -327,7 +324,8 @@ def train_parallel_exe(args):
         feeder = fluid.DataFeeder(place=place, feed_list=[image, label])
         train_reader = feeder.decorate_reader(
             paddle.batch(
-                flowers.train(), batch_size=args.batch_size_per_gpu),
+                train() if args.use_fake_reader else flowers.train(),
+                batch_size=args.batch_size_per_gpu),
             multi_devices=True)
 
         train_reader_iter = train_reader()
