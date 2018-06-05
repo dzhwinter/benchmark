@@ -4,7 +4,7 @@ from __future__ import print_function
 import sys
 import time
 import numpy as np
-import paddle.v2 as paddle
+import paddle
 import paddle.fluid as fluid
 import paddle.fluid.core as core
 import argparse
