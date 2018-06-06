@@ -366,17 +366,18 @@ def train_parallel_exe(args):
                 else:
                     exe.run([],
                             feed=feed_data if args.fix_data_in_gpu else
-                            feeder.feed(train_reader_iter.next()))
+                            train_reader_iter.next())
             continue
 
         if args.use_recordio:
             cost_val = exe.run([avg_cost.name] if (batch_id + 1) %
                                args.display_step == 0 else [])
         else:
-            cost_val = exe.run([avg_cost.name] if
-                               (batch_id + 1) % args.display_step == 0 else [],
-                               feed=feed_data if args.fix_data_in_gpu else
-                               feeder.feed(train_reader_iter.next()))
+            cost_val = exe.run(
+                [avg_cost.name]
+                if (batch_id + 1) % args.display_step == 0 else [],
+                feed=feed_data
+                if args.fix_data_in_gpu else train_reader_iter.next())
 
         img_count += args.batch_size
 
