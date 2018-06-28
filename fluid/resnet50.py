@@ -10,9 +10,8 @@ import time
 import cProfile, pstats, StringIO
 
 import paddle.v2 as paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
-import paddle.fluid.profiler as profiler
+import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 
 
 def parse_args():
@@ -194,7 +193,6 @@ def run_benchmark(model, args):
     optimizer = fluid.optimizer.Momentum(learning_rate=0.01, momentum=0.9)
     opts = optimizer.minimize(avg_cost)
 
-    fluid.memory_optimize(fluid.default_main_program())
 
     train_reader = paddle.batch(
         paddle.reader.shuffle(
@@ -208,7 +206,6 @@ def run_benchmark(model, args):
         batch_size=args.batch_size)
 
     def test(exe):
-        test_accuracy = fluid.average.WeightedAverage()
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(dshape),
                                     data)).astype("float32")
@@ -223,10 +220,9 @@ def run_benchmark(model, args):
 
         return test_accuracy.eval()
 
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
-    accuracy = fluid.average.WeightedAverage()
     if args.use_fake_data:
         data = train_reader().next()
         image = np.array(map(lambda x: x[0].reshape(dshape), data)).astype(
@@ -236,7 +232,6 @@ def run_benchmark(model, args):
 
     iters, num_samples, start_time = 0, 0, time.time()
     for pass_id in range(args.pass_num):
-        accuracy.reset()
         train_accs = []
         train_losses = []
         for batch_id, data in enumerate(train_reader()):
@@ -257,7 +252,6 @@ def run_benchmark(model, args):
                 fetch_list=[avg_cost, batch_acc, batch_size_tensor])
             iters += 1
             num_samples += len(label)
-            accuracy.add(value=acc, weight=weight)
             train_losses.append(loss)
             train_accs.append(acc)
             print("Pass: %d, Iter: %d, Loss: %f, Accuracy: %f" %
@@ -293,7 +287,6 @@ if __name__ == '__main__':
     if args.data_format == 'NHWC':
         raise ValueError('Only support NCHW data_format now.')
     if args.use_nvprof and args.device == 'GPU':
-        with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
-            run_benchmark(model_map[args.model], args)
+        run_benchmark(model_map[args.model], args)
     else:
         run_benchmark(model_map[args.model], args)

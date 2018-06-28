@@ -6,9 +6,9 @@ import numpy as np
 import argparse
 import time
 
-import paddle
-import paddle.fluid as fluid
-import paddle.fluid.profiler as profiler
+import paddle.v2 as paddle
+import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 
 SEED = 1
 DTYPE = "float32"
@@ -85,25 +85,6 @@ def cnn_model(data):
     return predict
 
 
-def eval_test(exe, batch_acc, batch_size_tensor, inference_program):
-    test_reader = paddle.batch(
-        paddle.dataset.mnist.test(), batch_size=args.batch_size)
-    test_pass_acc = fluid.average.WeightedAverage()
-    for batch_id, data in enumerate(test_reader()):
-        img_data = np.array(map(lambda x: x[0].reshape([1, 28, 28]),
-                                data)).astype(DTYPE)
-        y_data = np.array(map(lambda x: x[1], data)).astype("int64")
-        y_data = y_data.reshape([len(y_data), 1])
-
-        acc, weight = exe.run(inference_program,
-                              feed={"pixel": img_data,
-                                    "label": y_data},
-                              fetch_list=[batch_acc, batch_size_tensor])
-        test_pass_acc.add(value=acc, weight=weight)
-        pass_acc = test_pass_acc.eval()
-    return pass_acc
-
-
 def run_benchmark(model, args):
     if args.use_cprof:
         pr = cProfile.Profile()
@@ -134,10 +115,9 @@ def run_benchmark(model, args):
         learning_rate=0.001, beta1=0.9, beta2=0.999)
     opt.minimize(avg_cost)
 
-    fluid.memory_optimize(fluid.default_main_program())
-
     # Initialize executor
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.CUDAPlace(0)
+    # place = fluid.CPUPlace() if args.device == 'CPU' else fluid.CUDAPlace(0)
+    place = core.GPUPlace(0)
     exe = fluid.Executor(place)
 
     # Parameter initialization
@@ -147,10 +127,8 @@ def run_benchmark(model, args):
     train_reader = paddle.batch(
         paddle.dataset.mnist.train(), batch_size=args.batch_size)
 
-    accuracy = fluid.average.WeightedAverage()
     iters, num_samples, start_time = 0, 0, time.time()
     for pass_id in range(args.pass_num):
-        accuracy.reset()
         train_accs = []
         train_losses = []
         for batch_id, data in enumerate(train_reader()):
@@ -170,7 +148,6 @@ def run_benchmark(model, args):
                       "label": y_data},
                 fetch_list=[avg_cost, batch_acc, batch_size_tensor]
             )  # The accuracy is the accumulation of batches, but not the current batch.
-            accuracy.add(value=outs[1], weight=outs[2])
             iters += 1
             num_samples += len(y_data)
             loss = np.array(outs[0])
@@ -207,7 +184,6 @@ if __name__ == '__main__':
     args = parse_args()
     print_arguments(args)
     if args.use_nvprof and args.device == 'GPU':
-        with profiler.cuda_profiler("cuda_profiler.txt", 'csv') as nvprof:
-            run_benchmark(cnn_model, args)
+        run_benchmark(cnn_model, args)
     else:
         run_benchmark(cnn_model, args)

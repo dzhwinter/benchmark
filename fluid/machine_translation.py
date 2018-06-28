@@ -9,10 +9,8 @@ import time
 import distutils.util
 
 import paddle.v2 as paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
-import paddle.fluid.framework as framework
-from paddle.fluid.executor import Executor
+import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
@@ -268,8 +266,6 @@ def train():
     optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
     optimizer.minimize(avg_cost)
 
-    fluid.memory_optimize(fluid.default_main_program())
-
     train_batch_generator = paddle.batch(
         paddle.reader.shuffle(
             paddle.dataset.wmt14.train(args.dict_size), buf_size=1000),
@@ -280,9 +276,9 @@ def train():
             paddle.dataset.wmt14.test(args.dict_size), buf_size=1000),
         batch_size=args.batch_size)
 
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
-    exe = Executor(place)
-    exe.run(framework.default_startup_program())
+    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
+    exe = fluidi.Executor(place)
+    exe.run(fluid.framework.default_startup_program())
 
     def do_validation():
         total_loss = 0.0

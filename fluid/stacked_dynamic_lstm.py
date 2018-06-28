@@ -7,13 +7,11 @@ import cPickle
 import os
 import random
 import time
-
 import numpy
+
 import paddle.v2 as paddle
-import paddle.v2.dataset.imdb as imdb
-import paddle.fluid as fluid
-from paddle.v2 import batch
-import paddle.fluid.profiler as profiler
+import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 
 
 def parse_args():
@@ -66,7 +64,7 @@ def parse_args():
     return args
 
 
-word_dict = imdb.word_dict()
+word_dict = paddle.dataset.imdb.word_dict()
 
 
 def crop_sentence(reader, crop_size):
@@ -151,13 +149,13 @@ def main():
 
     fluid.memory_optimize(fluid.default_main_program())
 
-    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.CUDAPlace(0)
+    place = fluid.CPUPlace() if args.device == 'CPU' else fluid.GPUPlace(0)
     exe = fluid.Executor(place)
     exe.run(fluid.default_startup_program())
 
-    train_reader = batch(
+    train_reader = paddle.batch(
         paddle.reader.shuffle(
-            crop_sentence(imdb.train(word_dict), args.crop_size),
+            crop_sentence(paddle.dataset.imdb.train(word_dict), args.crop_size),
             buf_size=25000),
         batch_size=args.batch_size)
 

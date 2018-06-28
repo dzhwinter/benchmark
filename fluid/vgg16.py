@@ -4,9 +4,9 @@ from __future__ import print_function
 import sys
 import time
 import numpy as np
-import paddle
-import paddle.fluid as fluid
-import paddle.fluid.core as core
+import paddle.v2 as paddle
+import paddle.v2.fluid as fluid
+import paddle.v2.fluid.core as core
 import argparse
 import functools
 
@@ -117,10 +117,8 @@ def main():
     optimizer = fluid.optimizer.Adam(learning_rate=args.learning_rate)
     opts = optimizer.minimize(avg_cost)
 
-    fluid.memory_optimize(fluid.default_main_program())
-
     # Initialize executor
-    place = core.CPUPlace() if args.device == 'CPU' else core.CUDAPlace(0)
+    place = core.CPUPlace() if args.device == 'CPU' else core.GPUPlace(0)
     exe = fluid.Executor(place)
 
     # Parameter initialization
@@ -140,7 +138,6 @@ def main():
 
     # test
     def test(exe):
-        test_accuracy = fluid.average.WeightedAverage()
         for batch_id, data in enumerate(test_reader()):
             img_data = np.array(map(lambda x: x[0].reshape(data_shape),
                                     data)).astype("float32")
@@ -155,9 +152,7 @@ def main():
         return test_accuracy.eval()
 
     iters, num_samples, start_time = 0, 0, time.time()
-    accuracy = fluid.average.WeightedAverage()
     for pass_id in range(args.pass_num):
-        accuracy.reset()
         train_accs = []
         train_losses = []
         for batch_id, data in enumerate(train_reader()):
@@ -176,7 +171,6 @@ def main():
                 feed={"pixel": img_data,
                       "label": y_data},
                 fetch_list=[avg_cost, batch_acc, batch_size_tensor])
-            accuracy.add(value=acc, weight=weight)
             iters += 1
             num_samples += len(y_data)
             print(
