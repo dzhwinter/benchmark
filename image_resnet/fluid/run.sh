@@ -1,0 +1,2 @@
+export CUDA_VISIBLE_DEVICES=0
+python se_resnext152_parallel.py
